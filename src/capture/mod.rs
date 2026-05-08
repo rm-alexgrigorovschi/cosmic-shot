@@ -34,7 +34,7 @@ pub enum CaptureError {
     #[error("no active output found")]
     NoOutput,
 
-    #[error("compositor offered no supported pixel format (need Argb8888 or Xrgb8888)")]
+    #[error("compositor offered no supported pixel format (need Argb8888, Xrgb8888, Abgr8888, or Xbgr8888)")]
     UnsupportedFormat,
 
     #[error("capture frame failed")]
@@ -139,7 +139,15 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
         .frame
         .shm_formats
         .iter()
-        .find(|f| **f == wl_shm::Format::Argb8888 || **f == wl_shm::Format::Xrgb8888)
+        .find(|f| {
+            matches!(
+                f,
+                wl_shm::Format::Argb8888
+                    | wl_shm::Format::Xrgb8888
+                    | wl_shm::Format::Abgr8888
+                    | wl_shm::Format::Xbgr8888
+            )
+        })
         .copied()
         .ok_or(CaptureError::UnsupportedFormat)?;
 
@@ -189,7 +197,9 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
     let pixel_format = match format {
         wl_shm::Format::Argb8888 => PixelFormat::Argb8888,
         wl_shm::Format::Xrgb8888 => PixelFormat::Xrgb8888,
-        // INVARIANT: we filtered for exactly these two formats above.
+        wl_shm::Format::Abgr8888 => PixelFormat::Abgr8888,
+        wl_shm::Format::Xbgr8888 => PixelFormat::Xbgr8888,
+        // INVARIANT: we filtered for exactly these four formats above.
         _ => return Err(CaptureError::UnsupportedFormat),
     };
 

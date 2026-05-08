@@ -1,5 +1,6 @@
 mod capture;
 mod export;
+#[allow(dead_code)]
 mod overlay;
 mod types;
 

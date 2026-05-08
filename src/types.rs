@@ -1,6 +1,5 @@
 /// Pixel format of a captured frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum PixelFormat {
     /// ARGB8888 — bytes in memory: [B, G, R, A] (little-endian).
     Argb8888,
@@ -10,7 +9,6 @@ pub enum PixelFormat {
 
 /// Raw pixel data from a screen capture.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FrameBuffer {
     pub data: Vec<u8>,
     pub width: u32,
@@ -19,7 +17,6 @@ pub struct FrameBuffer {
     pub format: PixelFormat,
 }
 
-#[allow(dead_code)]
 impl FrameBuffer {
     /// Convert the raw pixel data to RGBA8 byte order.
     ///

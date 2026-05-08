@@ -6,7 +6,6 @@ use crate::types::FrameBuffer;
 
 /// Errors that can occur during image export.
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
 pub enum ExportError {
     #[error("PNG encoding failed: {0}")]
     Encode(String),
@@ -16,7 +15,6 @@ pub enum ExportError {
 }
 
 /// Save a captured frame as a PNG file.
-#[allow(dead_code)]
 pub fn save_png(frame: &FrameBuffer, path: &Path) -> Result<(), ExportError> {
     let rgba = frame.to_rgba();
 

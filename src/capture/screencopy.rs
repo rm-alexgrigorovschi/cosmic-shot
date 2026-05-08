@@ -12,7 +12,6 @@ use super::CaptureState;
 
 /// Tracks the state of a single screencopy frame capture.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub(crate) struct FrameState {
     /// Preferred shm format from the compositor.
     pub format: Option<wayland_client::protocol::wl_shm::Format>,

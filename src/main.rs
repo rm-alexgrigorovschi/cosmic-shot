@@ -1,8 +1,9 @@
 mod capture;
 mod export;
-#[allow(dead_code)]
 mod overlay;
 mod types;
+
+use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -14,6 +15,20 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("cosmic-shot starting");
 
-    // Pipeline will be wired in Task 5
+    // Phase 1: Capture
+    let frame = capture::capture_output()?;
+    tracing::info!(
+        width = frame.width,
+        height = frame.height,
+        "capture complete"
+    );
+
+    // Phase 2: Export (verification side effect)
+    let output_path = Path::new("capture.png");
+    export::save_png(&frame, output_path)?;
+
+    // Phase 3: Display
+    overlay::run(frame)?;
+
     Ok(())
 }

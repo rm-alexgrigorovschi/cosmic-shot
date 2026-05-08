@@ -25,8 +25,11 @@
 - Never block the Wayland event loop with synchronous I/O (file writes, encoding)
 - All image encoding happens off the event loop, in a worker task
 - Buffer management: prefer `wl_shm` for v1 simplicity; revisit dmabuf later if perf demands it
-- Always check protocol support at startup; fail loudly if `wlr-screencopy` isn't available
-- Pin to `wlr-screencopy-unstable-v1`; isolate the protocol in one module so we can swap to `ext-image-copy-capture-v1` later without touching the rest of the codebase
+- Always check protocol support at startup; fail loudly if required protocols aren't available
+- Using `ext-image-copy-capture-v1` (COSMIC dropped `wlr-screencopy-unstable-v1` entirely)
+- Protocol code is isolated in `capture/screencopy.rs` — all Dispatch impls live there
+- COSMIC's compositor offers `Abgr8888`/`Xbgr8888` pixel formats (not `Argb8888`/`Xrgb8888`); both families are supported
+- M1 uses synchronous `blocking_dispatch` for single-shot capture; this is acceptable for the short-lived capture phase but must move to async when the event loop becomes persistent
 
 ## Performance Discipline
 - The freeze phase has a budget: capture-to-overlay-visible must be <50ms on reference hardware

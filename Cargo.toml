@@ -1,0 +1,18 @@
+[package]
+name = "cosmic-shot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Fast native screenshot tool for COSMIC DE"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = "0.19"
+image = { version = "0.25", default-features = false, features = ["png"] }
+iced = { version = "0.13", features = ["image"] }

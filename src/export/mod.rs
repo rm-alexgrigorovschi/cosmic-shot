@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use image::{ImageBuffer, Rgba};
+
 use crate::types::FrameBuffer;
 
 /// Errors that can occur during image export.
@@ -15,6 +17,15 @@ pub enum ExportError {
 
 /// Save a captured frame as a PNG file.
 #[allow(dead_code)]
-pub fn save_png(_frame: &FrameBuffer, _path: &Path) -> Result<(), ExportError> {
-    todo!("implemented in Task 3")
+pub fn save_png(frame: &FrameBuffer, path: &Path) -> Result<(), ExportError> {
+    let rgba = frame.to_rgba();
+
+    let img: ImageBuffer<Rgba<u8>, _> =
+        ImageBuffer::from_raw(frame.width, frame.height, rgba)
+            .ok_or_else(|| ExportError::Encode("pixel buffer size mismatch".to_string()))?;
+
+    img.save(path).map_err(|e| ExportError::Encode(e.to_string()))?;
+
+    tracing::info!(path = %path.display(), "saved PNG");
+    Ok(())
 }

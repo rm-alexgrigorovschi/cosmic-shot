@@ -260,10 +260,9 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                     IcedTask::none()
                 }
                 Message::MousePressed(id) => {
-                    if matches!(state.selection, SelectionState::Idle) {
-                        state.active_window = Some(id);
-                        state.selection = SelectionState::Drawing { start: state.cursor_pos };
-                    }
+                    // Always start a new selection — cancels any existing rect.
+                    state.active_window = Some(id);
+                    state.selection = SelectionState::Drawing { start: state.cursor_pos };
                     IcedTask::none()
                 }
                 Message::MouseReleased => {

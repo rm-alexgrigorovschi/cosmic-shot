@@ -182,3 +182,35 @@ memory cost is one copy of the raw pixel data per output.
 | `screenshot_filename_format`              | `config.rs`      | Filename matches `screenshot-YYYY-MM-DD_HH-MM-SS.png` |
 
 Existing M1–M3 tests remain unaffected.
+
+## Implementation Notes
+
+### Deviations from design
+
+**Clipboard: arboard replaced by wl-copy subprocess**
+The design specified `arboard` for clipboard. During implementation, arboard was added and then discovered to be broken for "copy then exit" flows: arboard spawns a background *thread* (not a process) to serve Wayland clipboard requests, but `iced::exit()` kills the process — taking the thread with it before any app can paste. Fixed by piping a PNG-encoded image to `wl-copy --type image/png` as a subprocess. `wl-copy` forks itself into an independent background process that serves clipboard requests after the parent exits. `arboard` removed from dependencies entirely.
+
+**HiDPI coordinate scaling (new requirement surfaced during testing)**
+The design did not account for HiDPI screens. iced/Wayland cursor events are in logical pixels; `FrameBuffer` data is in physical pixels. On a non-1× display the selection rect coordinates must be multiplied by the scale factor before cropping. Fix: `canvas::Program::update()` emits a `SurfaceBoundsKnown(window, w, h)` message on first event; at export time `scale = frame.width / logical_width` is applied to all four crop coordinates. A `scale_factor()` helper with debug logging was added.
+
+**Toolbar hit-test Y mismatch (bug found in review)**
+The `MousePressed` handler initially hardcoded `toolbar_y = rect.y + rect.height + 8.0` but `draw()` conditionally flips the toolbar above the selection when it doesn't fit below. Fixed by using the raw frame height as the surface height and replicating the same if/else logic from `draw()`.
+
+**Filename length: 34 not 35**
+The plan comment said `screenshot-YYYY-MM-DD_HH-MM-SS.png = 35 chars`. Actual count is 34. Test fixed accordingly.
+
+**Config logging improved**
+Added `tracing::debug!` for config path on load and `tracing::info!` on successful parse, so users can run with `RUST_LOG=info` to diagnose config issues. Parse errors now include the file path in the warning.
+
+**Thumbnail cache confusion**
+After first use, COSMIC file manager showed wrong thumbnails for saved PNGs. Root cause: stale `~/.cache/thumbnails/` from earlier broken captures. `rm -rf ~/.cache/thumbnails/` resolves it; actual PNG content was always correct.
+
+### Dependencies actually added
+
+| Crate   | Purpose                    | Notes                        |
+|---------|----------------------------|------------------------------|
+| `serde` | Config deserialization     | As designed                  |
+| `toml`  | TOML parsing               | As designed                  |
+| `dirs`  | `home_dir()` expansion     | As designed                  |
+| `chrono`| Timestamps                 | As designed                  |
+| `arboard`| Clipboard                 | Added then removed — see above |

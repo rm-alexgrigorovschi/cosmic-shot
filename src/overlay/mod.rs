@@ -1,3 +1,7 @@
+mod selection;
+#[allow(unused_imports)]
+pub(crate) use selection::{SelectionState, normalize_rect};
+
 use iced::widget::{container, image};
 use iced::{keyboard, Element, Length, Task as IcedTask, Theme};
 use iced_layershell::build_pattern::daemon;

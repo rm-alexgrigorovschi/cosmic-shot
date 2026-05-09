@@ -126,14 +126,34 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
     // 4. Create a capture session from the source.
     let session = capture_manager.create_session(&source, Options::empty(), &qh, ());
 
+    // Run the fallible capture logic; always clean up protocol objects afterward.
+    let result = capture_output_inner(&session, &qh, &mut event_queue, &mut state);
+
+    session.destroy();
+    source.destroy();
+    source_manager.destroy();
+    capture_manager.destroy();
+    output.release();
+
+    result
+}
+
+/// Inner capture logic for single-output, separated for guaranteed cleanup.
+fn capture_output_inner(
+    session: &wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_session_v1::ExtImageCopyCaptureSessionV1,
+    qh: &QueueHandle<CaptureState>,
+    event_queue: &mut wayland_client::EventQueue<CaptureState>,
+    state: &mut CaptureState,
+) -> Result<FrameBuffer, CaptureError> {
+    const MAX_ITERATIONS: u32 = 1000;
+
     // 5. Dispatch until session constraints are done.
     let mut iterations = 0u32;
-    const MAX_ITERATIONS: u32 = 1000;
     while !state.frame.constraints_done && !state.frame.failed {
         if iterations >= MAX_ITERATIONS {
             return Err(CaptureError::Timeout);
         }
-        event_queue.blocking_dispatch(&mut state)?;
+        event_queue.blocking_dispatch(state)?;
         iterations += 1;
     }
 
@@ -173,14 +193,14 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
         stride as i32,
         format,
         (),
-        &qh,
+        qh,
     );
 
     // 8. Create a frame, attach buffer, declare damage, and capture.
-    let frame = session.create_frame(&qh, ());
-    frame.attach_buffer(&wl_buffer);
-    frame.damage_buffer(0, 0, width as i32, height as i32);
-    frame.capture();
+    let capture_frame = session.create_frame(qh, ());
+    capture_frame.attach_buffer(&wl_buffer);
+    capture_frame.damage_buffer(0, 0, width as i32, height as i32);
+    capture_frame.capture();
 
     // 9. Wait for the frame to be ready.
     let mut iterations = 0u32;
@@ -188,7 +208,7 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
         if iterations >= MAX_ITERATIONS {
             return Err(CaptureError::Timeout);
         }
-        event_queue.blocking_dispatch(&mut state)?;
+        event_queue.blocking_dispatch(state)?;
         iterations += 1;
     }
 
@@ -208,14 +228,8 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
         _ => return Err(CaptureError::UnsupportedFormat),
     };
 
-    // 11. Clean up Wayland objects.
     wl_buffer.destroy();
-    frame.destroy();
-    session.destroy();
-    source.destroy();
-    source_manager.destroy();
-    capture_manager.destroy();
-    output.release();
+    capture_frame.destroy();
 
     tracing::info!(width, height, ?pixel_format, "frame captured");
 
@@ -321,6 +335,23 @@ fn capture_one_output(
     let source = source_manager.create_source(output, qh, ());
     let session = capture_manager.create_session(&source, Options::empty(), qh, ());
 
+    let result = capture_one_output_inner(&session, qh, event_queue, state);
+
+    // Always destroy protocol objects regardless of success/failure to avoid
+    // compositor-side resource leaks.
+    session.destroy();
+    source.destroy();
+
+    result
+}
+
+/// Inner capture logic separated so the caller can guarantee Wayland object cleanup.
+fn capture_one_output_inner(
+    session: &wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_session_v1::ExtImageCopyCaptureSessionV1,
+    qh: &QueueHandle<CaptureState>,
+    event_queue: &mut wayland_client::EventQueue<CaptureState>,
+    state: &mut CaptureState,
+) -> Result<FrameBuffer, CaptureError> {
     const MAX_ITERATIONS: u32 = 1000;
     let mut iterations = 0u32;
     while !state.frame.constraints_done && !state.frame.failed {
@@ -398,8 +429,6 @@ fn capture_one_output(
 
     wl_buffer.destroy();
     capture_frame.destroy();
-    session.destroy();
-    source.destroy();
 
     tracing::info!(width, height, ?pixel_format, "frame captured (multi-output)");
 

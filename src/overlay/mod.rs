@@ -11,11 +11,17 @@ use iced_layershell::to_layer_message;
 
 use crate::types::FrameBuffer;
 
+/// Per-surface selection and cursor state.
+#[derive(Default)]
+struct PerWindowState {
+    selection: SelectionState,
+    cursor_pos: iced::Point,
+}
+
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
     handle: image::Handle,
-    selection: SelectionState,
-    cursor_pos: iced::Point,
+    windows: std::collections::HashMap<iced::window::Id, PerWindowState>,
 }
 
 /// Messages for the overlay daemon.
@@ -29,16 +35,16 @@ enum Message {
     /// Escape key — exits if Idle, resets to Idle if Drawing or Selected.
     EscapePressed,
     /// Left mouse button pressed — captured via event subscription.
-    MousePressed,
+    MousePressed(iced::window::Id),
     /// Left mouse button released — captured via event subscription.
-    MouseReleased,
+    MouseReleased(iced::window::Id),
     /// Cursor moved to a new position.
-    CursorMoved(iced::Point),
+    CursorMoved(iced::window::Id, iced::Point),
 }
 
 /// Canvas program that renders the dim overlay, selection rectangle, and placeholder toolbar.
 struct SelectionCanvas<'a> {
-    state: &'a OverlayState,
+    window_state: &'a PerWindowState,
 }
 
 impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
@@ -62,9 +68,9 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
         );
 
         // 2. Draw selection rect if Drawing or Selected.
-        let maybe_rect = match &self.state.selection {
+        let maybe_rect = match &self.window_state.selection {
             SelectionState::Drawing { start } => {
-                Some(normalize_rect(*start, self.state.cursor_pos))
+                Some(normalize_rect(*start, self.window_state.cursor_pos))
             }
             SelectionState::Selected { rect } => Some(*rect),
             SelectionState::Idle => None,
@@ -111,7 +117,7 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
             });
 
             // 3. Placeholder toolbar when Selected.
-            if matches!(self.state.selection, SelectionState::Selected { .. }) {
+            if matches!(self.window_state.selection, SelectionState::Selected { .. }) {
                 let toolbar_w = 120.0_f32;
                 let toolbar_h = 32.0_f32;
                 let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
@@ -153,7 +159,7 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
         _bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
-        match self.state.selection {
+        match self.window_state.selection {
             SelectionState::Selected { .. } => iced::mouse::Interaction::default(),
             _ => iced::mouse::Interaction::Crosshair,
         }
@@ -162,13 +168,21 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
 
 fn overlay_view(
     state: &OverlayState,
-    _window: iced::window::Id,
+    window: iced::window::Id,
 ) -> Element<'_, Message, Theme, iced::Renderer> {
     let frozen = image::Image::new(state.handle.clone())
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let selection_canvas = canvas(SelectionCanvas { state })
+    // Get per-window state, or use a default (no selection) if window not yet registered.
+    // Use a static default to avoid returning a reference to a local.
+    static DEFAULT_WINDOW: std::sync::OnceLock<PerWindowState> = std::sync::OnceLock::new();
+    let window_state = state
+        .windows
+        .get(&window)
+        .unwrap_or_else(|| DEFAULT_WINDOW.get_or_init(PerWindowState::default));
+
+    let selection_canvas = canvas(SelectionCanvas { window_state })
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -221,31 +235,41 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         |_state: &OverlayState| "cosmic-shot".to_string(),
         |state: &mut OverlayState, message: Message| -> IcedTask<Message> {
             match message {
-                Message::CursorMoved(pos) => {
-                    state.cursor_pos = pos;
+                Message::CursorMoved(id, pos) => {
+                    state.windows.entry(id).or_default().cursor_pos = pos;
                     IcedTask::none()
                 }
-                Message::MousePressed => {
-                    if matches!(state.selection, SelectionState::Idle) {
-                        state.selection = SelectionState::Drawing { start: state.cursor_pos };
+                Message::MousePressed(id) => {
+                    let w = state.windows.entry(id).or_default();
+                    if matches!(w.selection, SelectionState::Idle) {
+                        w.selection = SelectionState::Drawing { start: w.cursor_pos };
                     }
                     IcedTask::none()
                 }
-                Message::MouseReleased => {
-                    if let SelectionState::Drawing { start } = state.selection {
-                        state.selection = SelectionState::Selected {
-                            rect: normalize_rect(start, state.cursor_pos),
+                Message::MouseReleased(id) => {
+                    let w = state.windows.entry(id).or_default();
+                    if let SelectionState::Drawing { start } = w.selection {
+                        w.selection = SelectionState::Selected {
+                            rect: normalize_rect(start, w.cursor_pos),
                         };
                     }
                     IcedTask::none()
                 }
-                Message::EscapePressed => match state.selection {
-                    SelectionState::Idle => iced::exit(),
-                    _ => {
-                        state.selection = SelectionState::Idle;
+                Message::EscapePressed => {
+                    // Escape applies globally — check if ALL windows are Idle
+                    let all_idle = state.windows.values().all(|w| {
+                        matches!(w.selection, SelectionState::Idle)
+                    });
+                    if all_idle {
+                        iced::exit()
+                    } else {
+                        // Reset all windows to Idle
+                        for w in state.windows.values_mut() {
+                            w.selection = SelectionState::Idle;
+                        }
                         IcedTask::none()
                     }
-                },
+                }
                 _ => IcedTask::none(),
             }
         },
@@ -263,15 +287,15 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                 }
                 _ => None,
             }),
-            listen_with(|event, _status, _id| match event {
+            listen_with(|event, _status, id| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Message::CursorMoved(position))
+                    Some(Message::CursorMoved(id, position))
                 }
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                    Some(Message::MousePressed)
+                    Some(Message::MousePressed(id))
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Message::MouseReleased)
+                    Some(Message::MouseReleased(id))
                 }
                 _ => None,
             }),
@@ -281,8 +305,7 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
     .run_with(move || (
         OverlayState {
             handle,
-            selection: SelectionState::Idle,
-            cursor_pos: iced::Point::ORIGIN,
+            windows: std::collections::HashMap::new(),
         },
         IcedTask::none(),
     ))

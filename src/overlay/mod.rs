@@ -11,21 +11,18 @@ use iced_layershell::to_layer_message;
 
 use crate::types::FrameBuffer;
 
-/// Per-surface selection and cursor state.
-#[derive(Default)]
-struct PerWindowState {
-    selection: SelectionState,
-    cursor_pos: iced::Point,
-}
-
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
     /// Frozen frames in output order — assigned to windows in first-seen order.
     frames: Vec<image::Handle>,
     /// Windows assigned so far: window::Id → index into `frames`.
     window_frame_idx: std::collections::HashMap<iced::window::Id, usize>,
-    /// Per-surface selection and cursor state.
-    windows: std::collections::HashMap<iced::window::Id, PerWindowState>,
+    /// Global selection state — shared across all surfaces.
+    selection: SelectionState,
+    /// Current cursor position on the active window.
+    cursor_pos: iced::Point,
+    /// Which window owns the current selection (set on MousePressed).
+    active_window: Option<iced::window::Id>,
 }
 
 /// Messages for the overlay daemon.
@@ -41,14 +38,15 @@ enum Message {
     /// Left mouse button pressed — captured via event subscription.
     MousePressed(iced::window::Id),
     /// Left mouse button released — captured via event subscription.
-    MouseReleased(iced::window::Id),
+    MouseReleased,
     /// Cursor moved to a new position.
     CursorMoved(iced::window::Id, iced::Point),
 }
 
 /// Canvas program that renders the dim overlay, selection rectangle, and placeholder toolbar.
 struct SelectionCanvas<'a> {
-    window_state: &'a PerWindowState,
+    state: &'a OverlayState,
+    window: iced::window::Id,
 }
 
 impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
@@ -71,85 +69,87 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
             Color { r: 0.0, g: 0.0, b: 0.0, a: 0.35 },
         );
 
-        // 2. Draw selection rect if Drawing or Selected.
-        let maybe_rect = match &self.window_state.selection {
-            SelectionState::Drawing { start } => {
-                Some(normalize_rect(*start, self.window_state.cursor_pos))
-            }
-            SelectionState::Selected { rect } => Some(*rect),
-            SelectionState::Idle => None,
-        };
+        // 2. Only draw the selection on the active window.
+        if self.state.active_window == Some(self.window) {
+            let maybe_rect = match &self.state.selection {
+                SelectionState::Drawing { start } => {
+                    Some(normalize_rect(*start, self.state.cursor_pos))
+                }
+                SelectionState::Selected { rect } => Some(*rect),
+                SelectionState::Idle => None,
+            };
 
-        if let Some(rect) = maybe_rect {
-            // 2a. Dashed white border.
-            let border = canvas::Path::rectangle(
-                Point::new(rect.x, rect.y),
-                Size::new(rect.width, rect.height),
-            );
-            const DASH: &[f32] = &[6.0, 4.0];
-            frame.stroke(
-                &border,
-                canvas::Stroke {
-                    style: canvas::stroke::Style::Solid(Color::WHITE),
-                    width: 1.5,
-                    line_dash: canvas::LineDash {
-                        segments: DASH,
-                        offset: 0,
+            if let Some(rect) = maybe_rect {
+                // 2a. Dashed white border.
+                let border = canvas::Path::rectangle(
+                    Point::new(rect.x, rect.y),
+                    Size::new(rect.width, rect.height),
+                );
+                const DASH: &[f32] = &[6.0, 4.0];
+                frame.stroke(
+                    &border,
+                    canvas::Stroke {
+                        style: canvas::stroke::Style::Solid(Color::WHITE),
+                        width: 1.5,
+                        line_dash: canvas::LineDash {
+                            segments: DASH,
+                            offset: 0,
+                        },
+                        ..canvas::Stroke::default()
                     },
-                    ..canvas::Stroke::default()
-                },
-            );
-
-            // 2b. Corner handles (5×5 white squares).
-            let handle = Size::new(5.0, 5.0);
-            for corner in [
-                Point::new(rect.x - 2.5, rect.y - 2.5),
-                Point::new(rect.x + rect.width - 2.5, rect.y - 2.5),
-                Point::new(rect.x - 2.5, rect.y + rect.height - 2.5),
-                Point::new(rect.x + rect.width - 2.5, rect.y + rect.height - 2.5),
-            ] {
-                frame.fill_rectangle(corner, handle, Color::WHITE);
-            }
-
-            // 2c. Size label above the selection.
-            frame.fill_text(canvas::Text {
-                content: format!("{} × {}", rect.width as u32, rect.height as u32),
-                position: Point::new(rect.x, rect.y - 18.0),
-                color: Color::WHITE,
-                size: iced::Pixels(12.0),
-                ..canvas::Text::default()
-            });
-
-            // 3. Placeholder toolbar when Selected.
-            if matches!(self.window_state.selection, SelectionState::Selected { .. }) {
-                let toolbar_w = 120.0_f32;
-                let toolbar_h = 32.0_f32;
-                let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
-                let toolbar_y = if rect.y + rect.height + 8.0 + toolbar_h < bounds.height {
-                    rect.y + rect.height + 8.0
-                } else {
-                    rect.y - 8.0 - toolbar_h
-                };
-
-                // Toolbar background.
-                frame.fill_rectangle(
-                    Point::new(toolbar_x, toolbar_y),
-                    Size::new(toolbar_w, toolbar_h),
-                    Color { r: 0.15, g: 0.15, b: 0.15, a: 0.95 },
                 );
 
-                // Placeholder labels (greyed out — wired in M4).
-                for (i, label) in ["Copy", "Save"].iter().enumerate() {
-                    frame.fill_text(canvas::Text {
-                        content: label.to_string(),
-                        position: Point::new(
-                            toolbar_x + 15.0 + i as f32 * 55.0,
-                            toolbar_y + 9.0,
-                        ),
-                        color: Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
-                        size: iced::Pixels(13.0),
-                        ..canvas::Text::default()
-                    });
+                // 2b. Corner handles (5×5 white squares).
+                let handle = Size::new(5.0, 5.0);
+                for corner in [
+                    Point::new(rect.x - 2.5, rect.y - 2.5),
+                    Point::new(rect.x + rect.width - 2.5, rect.y - 2.5),
+                    Point::new(rect.x - 2.5, rect.y + rect.height - 2.5),
+                    Point::new(rect.x + rect.width - 2.5, rect.y + rect.height - 2.5),
+                ] {
+                    frame.fill_rectangle(corner, handle, Color::WHITE);
+                }
+
+                // 2c. Size label above the selection.
+                frame.fill_text(canvas::Text {
+                    content: format!("{} × {}", rect.width as u32, rect.height as u32),
+                    position: Point::new(rect.x, rect.y - 18.0),
+                    color: Color::WHITE,
+                    size: iced::Pixels(12.0),
+                    ..canvas::Text::default()
+                });
+
+                // 3. Placeholder toolbar when Selected.
+                if matches!(self.state.selection, SelectionState::Selected { .. }) {
+                    let toolbar_w = 120.0_f32;
+                    let toolbar_h = 32.0_f32;
+                    let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
+                    let toolbar_y = if rect.y + rect.height + 8.0 + toolbar_h < bounds.height {
+                        rect.y + rect.height + 8.0
+                    } else {
+                        rect.y - 8.0 - toolbar_h
+                    };
+
+                    // Toolbar background.
+                    frame.fill_rectangle(
+                        Point::new(toolbar_x, toolbar_y),
+                        Size::new(toolbar_w, toolbar_h),
+                        Color { r: 0.15, g: 0.15, b: 0.15, a: 0.95 },
+                    );
+
+                    // Placeholder labels (greyed out — wired in M4).
+                    for (i, label) in ["Copy", "Save"].iter().enumerate() {
+                        frame.fill_text(canvas::Text {
+                            content: label.to_string(),
+                            position: Point::new(
+                                toolbar_x + 15.0 + i as f32 * 55.0,
+                                toolbar_y + 9.0,
+                            ),
+                            color: Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
+                            size: iced::Pixels(13.0),
+                            ..canvas::Text::default()
+                        });
+                    }
                 }
             }
         }
@@ -163,9 +163,13 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
         _bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> iced::mouse::Interaction {
-        match self.window_state.selection {
-            SelectionState::Selected { .. } => iced::mouse::Interaction::default(),
-            _ => iced::mouse::Interaction::Crosshair,
+        if self.state.active_window == Some(self.window) {
+            match self.state.selection {
+                SelectionState::Selected { .. } => iced::mouse::Interaction::default(),
+                _ => iced::mouse::Interaction::Crosshair,
+            }
+        } else {
+            iced::mouse::Interaction::Crosshair
         }
     }
 }
@@ -174,8 +178,7 @@ fn overlay_view(
     state: &OverlayState,
     window: iced::window::Id,
 ) -> Element<'_, Message, Theme, iced::Renderer> {
-    // Assign this window a frame index on first CursorMoved (in update()),
-    // in order of appearance. Fall back to frame 0 before any cursor event.
+    // Assign frame index on first CursorMoved; fall back to frame 0 before any cursor event.
     let frame_idx = state.window_frame_idx.get(&window).copied().unwrap_or(0);
     let handle = state
         .frames
@@ -188,14 +191,7 @@ fn overlay_view(
         .width(Length::Fill)
         .height(Length::Fill);
 
-    // Get per-window selection state, or use a default (no selection).
-    static DEFAULT_WINDOW: std::sync::OnceLock<PerWindowState> = std::sync::OnceLock::new();
-    let window_state = state
-        .windows
-        .get(&window)
-        .unwrap_or_else(|| DEFAULT_WINDOW.get_or_init(PerWindowState::default));
-
-    let selection_canvas = canvas(SelectionCanvas { window_state })
+    let selection_canvas = canvas(SelectionCanvas { state, window })
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -257,37 +253,33 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                         let clamped = next_idx.min(state.frames.len().saturating_sub(1));
                         state.window_frame_idx.insert(id, clamped);
                     }
-                    state.windows.entry(id).or_default().cursor_pos = pos;
-                    IcedTask::none()
-                }
-                Message::MousePressed(id) => {
-                    let w = state.windows.entry(id).or_default();
-                    if matches!(w.selection, SelectionState::Idle) {
-                        w.selection = SelectionState::Drawing { start: w.cursor_pos };
+                    // Only track cursor on the active window (or any window if Idle).
+                    if state.active_window.is_none() || state.active_window == Some(id) {
+                        state.cursor_pos = pos;
                     }
                     IcedTask::none()
                 }
-                Message::MouseReleased(id) => {
-                    let w = state.windows.entry(id).or_default();
-                    if let SelectionState::Drawing { start } = w.selection {
-                        w.selection = SelectionState::Selected {
-                            rect: normalize_rect(start, w.cursor_pos),
+                Message::MousePressed(id) => {
+                    if matches!(state.selection, SelectionState::Idle) {
+                        state.active_window = Some(id);
+                        state.selection = SelectionState::Drawing { start: state.cursor_pos };
+                    }
+                    IcedTask::none()
+                }
+                Message::MouseReleased => {
+                    if let SelectionState::Drawing { start } = state.selection {
+                        state.selection = SelectionState::Selected {
+                            rect: normalize_rect(start, state.cursor_pos),
                         };
                     }
                     IcedTask::none()
                 }
                 Message::EscapePressed => {
-                    // Escape applies globally — check if ALL windows are Idle
-                    let all_idle = state.windows.values().all(|w| {
-                        matches!(w.selection, SelectionState::Idle)
-                    });
-                    if all_idle {
+                    if matches!(state.selection, SelectionState::Idle) {
                         iced::exit()
                     } else {
-                        // Reset all windows to Idle
-                        for w in state.windows.values_mut() {
-                            w.selection = SelectionState::Idle;
-                        }
+                        state.selection = SelectionState::Idle;
+                        state.active_window = None;
                         IcedTask::none()
                     }
                 }
@@ -316,7 +308,7 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                     Some(Message::MousePressed(id))
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                    Some(Message::MouseReleased(id))
+                    Some(Message::MouseReleased)
                 }
                 _ => None,
             }),
@@ -327,7 +319,9 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         OverlayState {
             frames: handles,
             window_frame_idx: std::collections::HashMap::new(),
-            windows: std::collections::HashMap::new(),
+            selection: SelectionState::Idle,
+            cursor_pos: iced::Point::ORIGIN,
+            active_window: None,
         },
         IcedTask::none(),
     ))

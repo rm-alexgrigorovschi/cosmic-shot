@@ -20,7 +20,11 @@ struct PerWindowState {
 
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
-    handle: image::Handle,
+    /// Frozen frames in output order — assigned to windows in first-seen order.
+    frames: Vec<image::Handle>,
+    /// Windows assigned so far: window::Id → index into `frames`.
+    window_frame_idx: std::collections::HashMap<iced::window::Id, usize>,
+    /// Per-surface selection and cursor state.
     windows: std::collections::HashMap<iced::window::Id, PerWindowState>,
 }
 
@@ -170,12 +174,21 @@ fn overlay_view(
     state: &OverlayState,
     window: iced::window::Id,
 ) -> Element<'_, Message, Theme, iced::Renderer> {
-    let frozen = image::Image::new(state.handle.clone())
+    // Assign this window a frame index on first CursorMoved (in update()),
+    // in order of appearance. Fall back to frame 0 before any cursor event.
+    let frame_idx = state.window_frame_idx.get(&window).copied().unwrap_or(0);
+    let handle = state
+        .frames
+        .get(frame_idx)
+        .or_else(|| state.frames.first())
+        .cloned()
+        .unwrap_or_else(|| state.frames[0].clone());
+
+    let frozen = image::Image::new(handle)
         .width(Length::Fill)
         .height(Length::Fill);
 
-    // Get per-window state, or use a default (no selection) if window not yet registered.
-    // Use a static default to avoid returning a reference to a local.
+    // Get per-window selection state, or use a default (no selection).
     static DEFAULT_WINDOW: std::sync::OnceLock<PerWindowState> = std::sync::OnceLock::new();
     let window_state = state
         .windows
@@ -214,12 +227,14 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // M2: show the first frame on all outputs.
-    // TODO(M3): map each window::Id to its per-output frame.
-    let frame = frames.into_iter().next().unwrap();
-    // INVARIANT: frames was non-empty, so next() is always Some.
-    let rgba = frame.to_rgba();
-    let handle = image::Handle::from_rgba(frame.width, frame.height, rgba);
+    // Convert all captured frames to image handles — one per output.
+    let handles: Vec<image::Handle> = frames
+        .into_iter()
+        .map(|f| {
+            let rgba = f.to_rgba();
+            image::Handle::from_rgba(f.width, f.height, rgba)
+        })
+        .collect();
 
     let layer_settings = LayerShellSettings {
         layer: Layer::Overlay,
@@ -236,6 +251,12 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         |state: &mut OverlayState, message: Message| -> IcedTask<Message> {
             match message {
                 Message::CursorMoved(id, pos) => {
+                    // Assign a frame index to this window on first seen, in order.
+                    if !state.window_frame_idx.contains_key(&id) {
+                        let next_idx = state.window_frame_idx.len();
+                        let clamped = next_idx.min(state.frames.len().saturating_sub(1));
+                        state.window_frame_idx.insert(id, clamped);
+                    }
                     state.windows.entry(id).or_default().cursor_pos = pos;
                     IcedTask::none()
                 }
@@ -304,7 +325,8 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
     .layer_settings(layer_settings)
     .run_with(move || (
         OverlayState {
-            handle,
+            frames: handles,
+            window_frame_idx: std::collections::HashMap::new(),
             windows: std::collections::HashMap::new(),
         },
         IcedTask::none(),

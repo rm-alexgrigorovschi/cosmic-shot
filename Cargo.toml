@@ -18,3 +18,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 iced = { version = "0.13.1", features = ["image", "canvas"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 iced_layershell = { version = "0.13.7", default-features = false }
+arboard = "3"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

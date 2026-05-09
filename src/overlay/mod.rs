@@ -2,8 +2,8 @@ mod selection;
 #[allow(unused_imports)]
 pub(crate) use selection::{SelectionState, normalize_rect};
 
-use iced::widget::{container, image};
-use iced::{keyboard, Element, Length, Task as IcedTask, Theme};
+use iced::widget::{canvas, container, image, stack};
+use iced::{keyboard, Color, Element, Length, Point, Rectangle, Size, Task as IcedTask, Theme};
 use iced_layershell::build_pattern::daemon;
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, StartMode};
@@ -36,18 +36,146 @@ enum Message {
     CursorMoved(iced::Point),
 }
 
+/// Canvas program that renders the dim overlay, selection rectangle, and placeholder toolbar.
+struct SelectionCanvas<'a> {
+    state: &'a OverlayState,
+}
+
+impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        // 1. Dim the entire overlay (~35% black).
+        frame.fill_rectangle(
+            Point::ORIGIN,
+            bounds.size(),
+            Color { r: 0.0, g: 0.0, b: 0.0, a: 0.35 },
+        );
+
+        // 2. Draw selection rect if Drawing or Selected.
+        let maybe_rect = match &self.state.selection {
+            SelectionState::Drawing { start } => {
+                Some(normalize_rect(*start, self.state.cursor_pos))
+            }
+            SelectionState::Selected { rect } => Some(*rect),
+            SelectionState::Idle => None,
+        };
+
+        if let Some(rect) = maybe_rect {
+            // 2a. Dashed white border.
+            let border = canvas::Path::rectangle(
+                Point::new(rect.x, rect.y),
+                Size::new(rect.width, rect.height),
+            );
+            const DASH: &[f32] = &[6.0, 4.0];
+            frame.stroke(
+                &border,
+                canvas::Stroke {
+                    style: canvas::stroke::Style::Solid(Color::WHITE),
+                    width: 1.5,
+                    line_dash: canvas::LineDash {
+                        segments: DASH,
+                        offset: 0,
+                    },
+                    ..canvas::Stroke::default()
+                },
+            );
+
+            // 2b. Corner handles (5×5 white squares).
+            let handle = Size::new(5.0, 5.0);
+            for corner in [
+                Point::new(rect.x - 2.5, rect.y - 2.5),
+                Point::new(rect.x + rect.width - 2.5, rect.y - 2.5),
+                Point::new(rect.x - 2.5, rect.y + rect.height - 2.5),
+                Point::new(rect.x + rect.width - 2.5, rect.y + rect.height - 2.5),
+            ] {
+                frame.fill_rectangle(corner, handle, Color::WHITE);
+            }
+
+            // 2c. Size label above the selection.
+            frame.fill_text(canvas::Text {
+                content: format!("{} × {}", rect.width as u32, rect.height as u32),
+                position: Point::new(rect.x, rect.y - 18.0),
+                color: Color::WHITE,
+                size: iced::Pixels(12.0),
+                ..canvas::Text::default()
+            });
+
+            // 3. Placeholder toolbar when Selected.
+            if matches!(self.state.selection, SelectionState::Selected { .. }) {
+                let toolbar_w = 120.0_f32;
+                let toolbar_h = 32.0_f32;
+                let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
+                let toolbar_y = if rect.y + rect.height + 8.0 + toolbar_h < bounds.height {
+                    rect.y + rect.height + 8.0
+                } else {
+                    rect.y - 8.0 - toolbar_h
+                };
+
+                // Toolbar background.
+                frame.fill_rectangle(
+                    Point::new(toolbar_x, toolbar_y),
+                    Size::new(toolbar_w, toolbar_h),
+                    Color { r: 0.15, g: 0.15, b: 0.15, a: 0.95 },
+                );
+
+                // Placeholder labels (greyed out — wired in M4).
+                for (i, label) in ["Copy", "Save"].iter().enumerate() {
+                    frame.fill_text(canvas::Text {
+                        content: label.to_string(),
+                        position: Point::new(
+                            toolbar_x + 15.0 + i as f32 * 55.0,
+                            toolbar_y + 9.0,
+                        ),
+                        color: Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
+                        size: iced::Pixels(13.0),
+                        ..canvas::Text::default()
+                    });
+                }
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &(),
+        _bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> iced::mouse::Interaction {
+        match self.state.selection {
+            SelectionState::Selected { .. } => iced::mouse::Interaction::default(),
+            _ => iced::mouse::Interaction::Crosshair,
+        }
+    }
+}
+
 fn overlay_view(
     state: &OverlayState,
     _window: iced::window::Id,
 ) -> Element<'_, Message, Theme, iced::Renderer> {
-    container(
-        image::Image::new(state.handle.clone())
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    let frozen = image::Image::new(state.handle.clone())
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let selection_canvas = canvas(SelectionCanvas { state })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    container(stack![frozen, selection_canvas])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// Display frozen frames as fullscreen layer-shell overlays on all outputs.

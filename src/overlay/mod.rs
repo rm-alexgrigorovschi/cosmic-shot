@@ -115,7 +115,7 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
                 let font_size = 13.0_f32;
                 let pill_w = 90.0_f32;
                 let pill_h = 22.0_f32;
-                let pill_x = rect.x + (rect.width - pill_w) / 2.0;
+                let pill_x = rect.x;
                 let pill_y = rect.y - pill_h - 4.0;
                 frame.fill_rectangle(
                     Point::new(pill_x, pill_y),

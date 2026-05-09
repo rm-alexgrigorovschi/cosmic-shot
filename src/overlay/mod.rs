@@ -295,9 +295,18 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                             let toolbar_w = 120.0_f32;
                             let toolbar_h = 32.0_f32;
                             let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
-                            // Match the draw() toolbar Y logic (assume below-rect fits —
-                            // sufficient for click detection since the overlay fills the screen).
-                            let toolbar_y = rect.y + rect.height + 8.0;
+                            // Mirror the draw() toolbar placement logic exactly.
+                            // Use the raw frame height as the surface height (layer-shell fills the output).
+                            let surface_h = state.window_frame_idx
+                                .get(&id)
+                                .and_then(|&idx| state.raw_frames.get(idx))
+                                .map(|f| f.height as f32)
+                                .unwrap_or(f32::MAX);
+                            let toolbar_y = if rect.y + rect.height + 8.0 + toolbar_h < surface_h {
+                                rect.y + rect.height + 8.0
+                            } else {
+                                rect.y - 8.0 - toolbar_h
+                            };
 
                             let click = state.cursor_pos;
                             let copy_rect = Rectangle {

@@ -110,22 +110,29 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
                     frame.fill_rectangle(corner, handle, Color::WHITE);
                 }
 
-                // 2c. Size label above the selection — white pill background, black text.
+                // 2c. Size label above the selection — white pill, bold black text, centred.
                 let label = format!("{} × {}", rect.width as u32, rect.height as u32);
-                let label_w = label.len() as f32 * 7.5 + 10.0; // approximate width
-                let label_h = 18.0_f32;
-                let label_x = rect.x;
-                let label_y = rect.y - label_h - 2.0;
+                let font_size = 13.0_f32;
+                let pill_w = 90.0_f32;
+                let pill_h = 22.0_f32;
+                let pill_x = rect.x + (rect.width - pill_w) / 2.0;
+                let pill_y = rect.y - pill_h - 4.0;
                 frame.fill_rectangle(
-                    Point::new(label_x, label_y),
-                    Size::new(label_w, label_h),
+                    Point::new(pill_x, pill_y),
+                    Size::new(pill_w, pill_h),
                     Color::WHITE,
                 );
                 frame.fill_text(canvas::Text {
                     content: label,
-                    position: Point::new(label_x + 5.0, label_y + 2.0),
+                    position: Point::new(pill_x + pill_w / 2.0, pill_y + pill_h / 2.0),
                     color: Color::BLACK,
-                    size: iced::Pixels(12.0),
+                    size: iced::Pixels(font_size),
+                    font: iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..iced::Font::default()
+                    },
+                    horizontal_alignment: iced::alignment::Horizontal::Center,
+                    vertical_alignment: iced::alignment::Vertical::Center,
                     ..canvas::Text::default()
                 });
 

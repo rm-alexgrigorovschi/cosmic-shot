@@ -41,7 +41,11 @@ impl Config {
                     Self::default()
                 }
             },
-            Err(_) => Self::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => {
+                tracing::warn!(%e, "failed to read config, using defaults");
+                Self::default()
+            }
         }
     }
 

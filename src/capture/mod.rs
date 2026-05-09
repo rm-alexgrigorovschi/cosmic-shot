@@ -35,7 +35,6 @@ pub enum CaptureError {
     NoOutput,
 
     #[error("no outputs available on the compositor")]
-    #[allow(dead_code)] // used via lib.rs; binary wires this up in Task 5
     NoOutputs,
 
     #[error("compositor offered no supported pixel format (need Argb8888, Xrgb8888, Abgr8888, or Xbgr8888)")]
@@ -157,10 +156,12 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
 
     let width = state.frame.buffer_width;
     let height = state.frame.buffer_height;
-    // INVARIANT: stride is width * 4 for 32-bit ARGB/XRGB formats; the protocol
-    // does not provide stride, so we compute it from the known pixel width.
+    // INVARIANT: stride is width * 4 for all supported 32-bit formats; the
+    // protocol does not provide stride, so we compute it from the known pixel width.
     let stride = width * 4;
-    let pool_size = (stride * height) as usize;
+    let pool_size = (stride as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| CaptureError::ShmPool("pool size overflow".into()))?;
 
     // 7. Create an shm buffer.
     let mut pool =
@@ -243,7 +244,6 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
 /// let frames = cosmic_shot::capture::capture_all_outputs().expect("capture failed");
 /// println!("captured {} output(s)", frames.len());
 /// ```
-#[allow(dead_code)] // exposed via lib.rs; binary wires this up in Task 5
 pub fn capture_all_outputs() -> Result<Vec<FrameBuffer>, CaptureError> {
     let conn =
         Connection::connect_to_env().map_err(|e| CaptureError::Connection(e.to_string()))?;
@@ -351,7 +351,9 @@ fn capture_one_output(
     let height = state.frame.buffer_height;
     // INVARIANT: stride is width * 4 for all supported 32-bit formats.
     let stride = width * 4;
-    let pool_size = (stride * height) as usize;
+    let pool_size = (stride as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| CaptureError::ShmPool("pool size overflow".into()))?;
 
     let mut pool =
         RawPool::new(pool_size, &state.shm).map_err(|e| CaptureError::ShmPool(e.to_string()))?;

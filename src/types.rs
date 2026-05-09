@@ -27,7 +27,10 @@ impl FrameBuffer {
     /// Handles both ARGB/XRGB ([B,G,R,A/X] in memory) and ABGR/XBGR ([R,G,B,A/X] in memory).
     /// Output is always [R, G, B, A] per pixel (standard RGBA for image/iced).
     pub fn to_rgba(&self) -> Vec<u8> {
-        let mut rgba = Vec::with_capacity((self.width * self.height * 4) as usize);
+        let capacity = (self.width as usize)
+            .saturating_mul(self.height as usize)
+            .saturating_mul(4);
+        let mut rgba = Vec::with_capacity(capacity);
         for y in 0..self.height {
             let row_start = (y * self.stride) as usize;
             for x in 0..self.width {

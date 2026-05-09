@@ -14,15 +14,26 @@ use crate::types::FrameBuffer;
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
     handle: image::Handle,
+    selection: SelectionState,
+    cursor_pos: iced::Point,
 }
 
-/// The `daemon` build pattern requires `TryInto<LayershellCustomActionsWithId>` —
-/// `#[to_layer_message(multi)]` generates that impl plus all multi-window layer-shell
-/// control variants. The catch-all arm in `update` handles those variants we don't use.
+/// Messages for the overlay daemon.
+///
+/// `#[to_layer_message(multi)]` generates `TryInto<LayershellCustomActionsWithId>`
+/// (required by the `daemon` build pattern) plus multi-window layer-shell variants.
+/// The catch-all arm in `update` handles those generated variants.
 #[to_layer_message(multi)]
 #[derive(Debug, Clone)]
 enum Message {
-    Close,
+    /// Escape key — exits if Idle, resets to Idle if Drawing or Selected.
+    EscapePressed,
+    /// Left mouse button pressed — captured via event subscription.
+    MousePressed,
+    /// Left mouse button released — captured via event subscription.
+    MouseReleased,
+    /// Cursor moved to a new position.
+    CursorMoved(iced::Point),
 }
 
 fn overlay_view(
@@ -80,9 +91,33 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
 
     daemon(
         |_state: &OverlayState| "cosmic-shot".to_string(),
-        |_state: &mut OverlayState, message: Message| -> IcedTask<Message> {
+        |state: &mut OverlayState, message: Message| -> IcedTask<Message> {
             match message {
-                Message::Close => iced::exit(),
+                Message::CursorMoved(pos) => {
+                    state.cursor_pos = pos;
+                    IcedTask::none()
+                }
+                Message::MousePressed => {
+                    if matches!(state.selection, SelectionState::Idle) {
+                        state.selection = SelectionState::Drawing { start: state.cursor_pos };
+                    }
+                    IcedTask::none()
+                }
+                Message::MouseReleased => {
+                    if let SelectionState::Drawing { start } = state.selection {
+                        state.selection = SelectionState::Selected {
+                            rect: normalize_rect(start, state.cursor_pos),
+                        };
+                    }
+                    IcedTask::none()
+                }
+                Message::EscapePressed => match state.selection {
+                    SelectionState::Idle => iced::exit(),
+                    _ => {
+                        state.selection = SelectionState::Idle;
+                        IcedTask::none()
+                    }
+                },
                 _ => IcedTask::none(),
             }
         },
@@ -90,13 +125,39 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         |_state: &mut OverlayState, _id| {},
     )
     .subscription(|_state| {
-        keyboard::on_key_press(|key, _mods| match key {
-            keyboard::Key::Named(keyboard::key::Named::Escape) => Some(Message::Close),
-            _ => None,
-        })
+        use iced::event::listen_with;
+        use iced::{mouse, Event};
+
+        iced::Subscription::batch([
+            keyboard::on_key_press(|key, _mods| match key {
+                keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                    Some(Message::EscapePressed)
+                }
+                _ => None,
+            }),
+            listen_with(|event, _status, _id| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Message::CursorMoved(position))
+                }
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    Some(Message::MousePressed)
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Message::MouseReleased)
+                }
+                _ => None,
+            }),
+        ])
     })
     .layer_settings(layer_settings)
-    .run_with(move || (OverlayState { handle }, IcedTask::none()))
+    .run_with(move || (
+        OverlayState {
+            handle,
+            selection: SelectionState::Idle,
+            cursor_pos: iced::Point::ORIGIN,
+        },
+        IcedTask::none(),
+    ))
     .map_err(|e| anyhow::anyhow!("iced_layershell error: {e}"))?;
 
     Ok(())

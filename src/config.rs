@@ -28,6 +28,7 @@ impl Config {
             return Self::default();
         };
         let path = config_dir.join("cosmic-shot").join("config.toml");
+        tracing::debug!(path = %path.display(), "loading config");
         Self::load_from(&path)
     }
 
@@ -35,9 +36,12 @@ impl Config {
     pub fn load_from(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => match toml::from_str(&contents) {
-                Ok(config) => config,
+                Ok(config) => {
+                    tracing::info!(path = %path.display(), "config loaded");
+                    config
+                }
                 Err(e) => {
-                    tracing::warn!(%e, "failed to parse config, using defaults");
+                    tracing::warn!(%e, path = %path.display(), "failed to parse config, using defaults");
                     Self::default()
                 }
             },

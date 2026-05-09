@@ -15,6 +15,6 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 smithay-client-toolkit = "0.19"
 image = { version = "0.25", default-features = false, features = ["png"] }
-iced = { version = "0.13", features = ["image"] }
+iced = { version = "0.13.1", features = ["image"] }
 tokio = { version = "1", features = ["rt"] }
 iced_layershell = { version = "0.13.7", default-features = false }

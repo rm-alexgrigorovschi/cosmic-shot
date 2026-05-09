@@ -20,6 +20,8 @@ struct OverlayState {
     handles: Vec<image::Handle>,
     /// Windows assigned so far: window::Id → index into raw_frames/handles.
     window_frame_idx: std::collections::HashMap<iced::window::Id, usize>,
+    /// Logical canvas size per window — used to compute HiDPI scale factor at crop time.
+    surface_logical_size: std::collections::HashMap<iced::window::Id, (f32, f32)>,
     /// Global selection state — shared across all surfaces.
     selection: SelectionState,
     /// Current cursor position on the active window.
@@ -48,6 +50,8 @@ enum Message {
     CopyRequested,
     /// User clicked Save in the toolbar.
     SaveRequested,
+    /// Canvas reported its logical bounds for HiDPI scale computation.
+    SurfaceBoundsKnown(iced::window::Id, f32, f32),
 }
 
 /// Canvas program that renders the dim overlay, selection rectangle, and placeholder toolbar.
@@ -58,6 +62,28 @@ struct SelectionCanvas<'a> {
 
 impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
     type State = ();
+
+    fn update(
+        &self,
+        _state: &mut (),
+        _event: canvas::Event,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> (canvas::event::Status, Option<Message>) {
+        // Report logical bounds once per window so the export handler can compute
+        // the HiDPI scale factor (physical_pixels / logical_pixels).
+        let known = self.state.surface_logical_size.get(&self.window);
+        let msg = if known != Some(&(bounds.width, bounds.height)) {
+            Some(Message::SurfaceBoundsKnown(
+                self.window,
+                bounds.width,
+                bounds.height,
+            ))
+        } else {
+            None
+        };
+        (canvas::event::Status::Ignored, msg)
+    }
 
     fn draw(
         &self,
@@ -196,6 +222,23 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
             iced::mouse::Interaction::Crosshair
         }
     }
+}
+
+/// Compute the HiDPI scale factor for a window.
+///
+/// Returns `physical_width / logical_width`. Falls back to 1.0 if the logical
+/// size hasn't been reported yet (selection before first canvas event — rare).
+fn scale_factor(
+    frame: &FrameBuffer,
+    surface_logical_size: &std::collections::HashMap<iced::window::Id, (f32, f32)>,
+    window: iced::window::Id,
+) -> f32 {
+    if let Some(&(logical_w, _)) = surface_logical_size.get(&window) {
+        if logical_w > 0.0 {
+            return frame.width as f32 / logical_w;
+        }
+    }
+    1.0
 }
 
 fn overlay_view(
@@ -358,12 +401,13 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                                 .copied()
                                 .unwrap_or(0);
                             if let Some(frame) = state.raw_frames.get(frame_idx) {
+                                let scale = scale_factor(frame, &state.surface_logical_size, window_id);
                                 match crop_selection(
                                     frame,
-                                    rect.x as u32,
-                                    rect.y as u32,
-                                    rect.width as u32,
-                                    rect.height as u32,
+                                    (rect.x * scale) as u32,
+                                    (rect.y * scale) as u32,
+                                    (rect.width * scale) as u32,
+                                    (rect.height * scale) as u32,
                                 ) {
                                     Ok(cropped) => {
                                         if let Err(e) = export::copy_to_clipboard(&cropped) {
@@ -385,12 +429,13 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                                 .copied()
                                 .unwrap_or(0);
                             if let Some(frame) = state.raw_frames.get(frame_idx) {
+                                let scale = scale_factor(frame, &state.surface_logical_size, window_id);
                                 match crop_selection(
                                     frame,
-                                    rect.x as u32,
-                                    rect.y as u32,
-                                    rect.width as u32,
-                                    rect.height as u32,
+                                    (rect.x * scale) as u32,
+                                    (rect.y * scale) as u32,
+                                    (rect.width * scale) as u32,
+                                    (rect.height * scale) as u32,
                                 ) {
                                     Ok(cropped) => {
                                         let cfg = Config::load();
@@ -410,6 +455,10 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                         }
                     }
                     iced::exit()
+                }
+                Message::SurfaceBoundsKnown(id, w, h) => {
+                    state.surface_logical_size.insert(id, (w, h));
+                    IcedTask::none()
                 }
                 _ => IcedTask::none(),
             }
@@ -448,6 +497,7 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
             raw_frames,
             handles,
             window_frame_idx: std::collections::HashMap::new(),
+            surface_logical_size: std::collections::HashMap::new(),
             selection: SelectionState::Idle,
             cursor_pos: iced::Point::ORIGIN,
             active_window: None,

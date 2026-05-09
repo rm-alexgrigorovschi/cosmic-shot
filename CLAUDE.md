@@ -16,7 +16,7 @@
 - Errors crossing the Wayland boundary should include protocol context
 
 ## Async / Concurrency
-- Tokio with `rt` feature only — we don't need multi-thread runtime for a screenshot app
+- Tokio with `rt` + `macros` features — `current_thread` runtime only; no `rt-multi-thread`
 - Avoid `tokio::spawn` unless there's a real reason; prefer single-task event loops
 - No `block_on` inside async contexts
 - Channels: `tokio::sync::mpsc` for async, `crossbeam` if we need sync
@@ -31,7 +31,18 @@
 - COSMIC's compositor offers `Abgr8888`/`Xbgr8888` pixel formats (not `Argb8888`/`Xrgb8888`); both families are supported
 - M1 uses synchronous `blocking_dispatch` for single-shot capture; this is acceptable for the short-lived capture phase but must move to async when the event loop becomes persistent
 
-## Performance Discipline
+## iced / iced_layershell
+- `iced` pinned to `0.13.1`; `iced_layershell` pinned to `0.13.7` (0.18.x requires iced 0.14)
+- Multi-output overlay requires `build_pattern::daemon` + `StartMode::AllScreens` — `Application::run` panics with AllScreens
+- Use `#[to_layer_message(multi)]` (not plain `#[to_layer_message]`) for the daemon pattern; generates `TryInto<LayershellCustomActionsWithId>`
+- View closure for daemon fails HRTB lifetime bound — use a named function `fn overlay_view(...)`
+- `listen_with` closure takes 3 args: `(event, _status, id: window::Id)`
+- Use `iced::exit()` to close the application (not `window::close`)
+- `canvas::Text` font weight: `iced::Font { weight: iced::font::Weight::Bold, ..Default::default() }`
+- `canvas::Text` alignment: `horizontal_alignment: iced::alignment::Horizontal::Center`, `vertical_alignment: iced::alignment::Vertical::Center`
+- `LineDash` segments must be `const &[f32]` to avoid lifetime issues in `draw()`
+
+
 - The freeze phase has a budget: capture-to-overlay-visible must be <50ms on reference hardware
 - No allocations in the hot path during selection (mouse-move handlers)
 - Image encoding is lazy — only on user export action, never during capture or selection

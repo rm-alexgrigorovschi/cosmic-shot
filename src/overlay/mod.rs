@@ -1,106 +1,101 @@
 use iced::widget::{container, image};
 use iced::{keyboard, Element, Length, Task as IcedTask, Theme};
-use iced_layershell::Application;
+use iced_layershell::build_pattern::daemon;
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
-use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
+use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
 use crate::types::FrameBuffer;
 
-struct App {
-    image_handle: image::Handle,
+/// State shared across all layer-shell surfaces.
+struct OverlayState {
+    handle: image::Handle,
 }
 
-/// Message enum for the overlay app.
-///
-/// The `#[to_layer_message]` macro generates the `TryInto<LayershellCustomActions>` impl
-/// and adds layer-shell-specific variants automatically. Our update() must have a
-/// catch-all `_ => IcedTask::none()` arm to handle those generated variants.
-#[to_layer_message]
+/// The `daemon` build pattern requires `TryInto<LayershellCustomActionsWithId>` —
+/// `#[to_layer_message(multi)]` generates that impl plus all multi-window layer-shell
+/// control variants. The catch-all arm in `update` handles those variants we don't use.
+#[to_layer_message(multi)]
 #[derive(Debug, Clone)]
 enum Message {
     Close,
 }
 
-/// Display captured frames as a fullscreen layer-shell overlay on all outputs.
+fn overlay_view(
+    state: &OverlayState,
+    _window: iced::window::Id,
+) -> Element<'_, Message, Theme, iced::Renderer> {
+    container(
+        image::Image::new(state.handle.clone())
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Display frozen frames as fullscreen layer-shell overlays on all outputs.
 ///
-/// Returns `Ok(())` immediately when `frames` is empty.
+/// Uses `StartMode::AllScreens` via the `daemon` build pattern (required for
+/// multi-output — `Application::run` asserts against `AllScreens`).
+/// Closes all surfaces on Escape.
 ///
-/// # Limitations (M2)
-/// Only the first frame is used for all surfaces. Multi-output support is planned.
+/// Returns `Ok(())` immediately if `frames` is empty.
+///
+/// # Errors
+/// Returns an error if `iced_layershell` fails to initialize.
+///
+/// # Example
+/// ```no_run
+/// use cosmic_shot::overlay;
+/// use cosmic_shot::types::{FrameBuffer, PixelFormat};
+/// overlay::run(vec![]).unwrap();
+/// ```
 pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
     if frames.is_empty() {
         return Ok(());
     }
 
-    // M2 limitation: use the first frame for all surfaces.
-    let frame = frames.into_iter().next().expect("checked non-empty above");
-    let width = frame.width;
-    let height = frame.height;
+    // M2: show the first frame on all outputs.
+    // TODO(M3): map each window::Id to its per-output frame.
+    let frame = frames.into_iter().next().unwrap();
+    // INVARIANT: frames was non-empty, so next() is always Some.
     let rgba = frame.to_rgba();
-    let handle = image::Handle::from_rgba(width, height, rgba);
+    let handle = image::Handle::from_rgba(frame.width, frame.height, rgba);
 
-    App::run(Settings {
-        id: None,
-        layer_settings: LayerShellSettings {
-            layer: Layer::Overlay,
-            anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
-            exclusive_zone: -1,
-            keyboard_interactivity: KeyboardInteractivity::Exclusive,
-            start_mode: StartMode::AllScreens,
-            size: Some((0, 0)),
-            margin: (0, 0, 0, 0),
-            events_transparent: false,
+    let layer_settings = LayerShellSettings {
+        layer: Layer::Overlay,
+        anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
+        exclusive_zone: -1,
+        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+        start_mode: StartMode::AllScreens,
+        size: Some((0, 0)), // fill output when all edges are anchored
+        ..Default::default()
+    };
+
+    daemon(
+        |_state: &OverlayState| "cosmic-shot".to_string(),
+        |_state: &mut OverlayState, message: Message| -> IcedTask<Message> {
+            match message {
+                Message::Close => iced::exit(),
+                _ => IcedTask::none(),
+            }
         },
-        flags: handle,
-        fonts: Vec::new(),
-        default_font: iced::Font::default(),
-        default_text_size: iced::Pixels(16.0),
-        antialiasing: false,
-        virtual_keyboard_support: None,
-    })
-    .map_err(|e| anyhow::anyhow!("iced_layershell error: {e}"))
-}
-
-impl Application for App {
-    type Executor = iced::executor::Default;
-    type Message = Message;
-    type Theme = Theme;
-    type Flags = image::Handle;
-
-    fn new(handle: Self::Flags) -> (Self, IcedTask<Message>) {
-        (App { image_handle: handle }, IcedTask::none())
-    }
-
-    fn namespace(&self) -> String {
-        String::from("cosmic-shot")
-    }
-
-    fn update(&mut self, message: Message) -> IcedTask<Message> {
-        match message {
-            Message::Close => iced::exit(),
-            // Catch-all for layer-shell variants injected by #[to_layer_message].
-            _ => IcedTask::none(),
-        }
-    }
-
-    fn view(&self) -> Element<'_, Message> {
-        container(
-            image::Image::new(self.image_handle.clone())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
-    fn subscription(&self) -> iced::Subscription<Message> {
-        keyboard::on_key_press(|key, _modifiers| match key {
+        overlay_view,
+        |_state: &mut OverlayState, _id| {},
+    )
+    .subscription(|_state| {
+        keyboard::on_key_press(|key, _mods| match key {
             keyboard::Key::Named(keyboard::key::Named::Escape) => Some(Message::Close),
             _ => None,
         })
-    }
+    })
+    .layer_settings(layer_settings)
+    .run_with(move || (OverlayState { handle }, IcedTask::none()))
+    .map_err(|e| anyhow::anyhow!("iced_layershell error: {e}"))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -109,8 +104,7 @@ mod tests {
 
     #[test]
     fn run_with_empty_frames_returns_ok() {
-        // With no frames, run() should return Ok(()) immediately.
-        // This tests the early-return path without needing a compositor.
+        // Tests the early-return path — no compositor needed.
         let result = run(vec![]);
         assert!(result.is_ok());
     }

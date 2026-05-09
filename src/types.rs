@@ -11,6 +11,19 @@ pub enum PixelFormat {
     Xbgr8888,
 }
 
+/// Errors that can occur when converting pixel data.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "frame data too short: need {expected} bytes for {width}x{height} (stride {stride}), got {actual}"
+)]
+pub struct ConversionError {
+    expected: usize,
+    actual: usize,
+    width: u32,
+    height: u32,
+    stride: u32,
+}
+
 /// Raw pixel data from a screen capture.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
@@ -26,7 +39,24 @@ impl FrameBuffer {
     ///
     /// Handles both ARGB/XRGB ([B,G,R,A/X] in memory) and ABGR/XBGR ([R,G,B,A/X] in memory).
     /// Output is always [R, G, B, A] per pixel (standard RGBA for image/iced).
-    pub fn to_rgba(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConversionError`] if the buffer data is too short for the
+    /// declared dimensions.
+    pub fn to_rgba(&self) -> Result<Vec<u8>, ConversionError> {
+        let required = (self.stride as usize)
+            .saturating_mul(self.height as usize);
+        if self.data.len() < required {
+            return Err(ConversionError {
+                expected: required,
+                actual: self.data.len(),
+                width: self.width,
+                height: self.height,
+                stride: self.stride,
+            });
+        }
+
         let capacity = (self.width as usize)
             .saturating_mul(self.height as usize)
             .saturating_mul(4);
@@ -68,7 +98,7 @@ impl FrameBuffer {
                 rgba.extend_from_slice(&[r, g, b, a]);
             }
         }
-        rgba
+        Ok(rgba)
     }
 }
 
@@ -93,7 +123,7 @@ mod tests {
         // Memory layout for Abgr8888: [R, G, B, A] per pixel
         // to_rgba() should produce [R, G, B, A]
         let frame = make_frame(PixelFormat::Abgr8888, vec![0x11, 0x22, 0x33, 0xAA]);
-        let rgba = frame.to_rgba();
+        let rgba = frame.to_rgba().unwrap();
         assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xAA]);
     }
 
@@ -102,7 +132,7 @@ mod tests {
         // Memory layout for Xbgr8888: [R, G, B, X] per pixel
         // to_rgba() should produce [R, G, B, 255] (X replaced by 255)
         let frame = make_frame(PixelFormat::Xbgr8888, vec![0x11, 0x22, 0x33, 0x00]);
-        let rgba = frame.to_rgba();
+        let rgba = frame.to_rgba().unwrap();
         assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xFF]);
     }
 
@@ -111,7 +141,7 @@ mod tests {
         // Memory layout for Argb8888: [B, G, R, A] per pixel
         // to_rgba() should produce [R, G, B, A]
         let frame = make_frame(PixelFormat::Argb8888, vec![0x33, 0x22, 0x11, 0xAA]);
-        let rgba = frame.to_rgba();
+        let rgba = frame.to_rgba().unwrap();
         assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xAA]);
     }
 
@@ -120,7 +150,21 @@ mod tests {
         // Memory layout for Xrgb8888: [B, G, R, X] per pixel
         // to_rgba() should produce [R, G, B, 255]
         let frame = make_frame(PixelFormat::Xrgb8888, vec![0x33, 0x22, 0x11, 0x00]);
-        let rgba = frame.to_rgba();
+        let rgba = frame.to_rgba().unwrap();
         assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xFF]);
+    }
+
+    #[test]
+    fn to_rgba_returns_error_on_truncated_buffer() {
+        let frame = FrameBuffer {
+            data: vec![0x11, 0x22], // only 2 bytes — far too short
+            width: 2,
+            height: 1,
+            stride: 8,
+            format: PixelFormat::Abgr8888,
+        };
+        let err = frame.to_rgba().unwrap_err();
+        assert_eq!(err.expected, 8);
+        assert_eq!(err.actual, 2);
     }
 }

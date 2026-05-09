@@ -244,7 +244,9 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
     let handles: Vec<image::Handle> = frames
         .into_iter()
         .map(|f| {
-            let rgba = f.to_rgba();
+            // INVARIANT: data was read as pool.mmap()[..stride*height] in
+            // capture_one_output, so data.len() == stride * height always holds.
+            let rgba = f.to_rgba().expect("captured frame data is well-formed");
             image::Handle::from_rgba(f.width, f.height, rgba)
         })
         .collect();

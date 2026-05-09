@@ -127,3 +127,20 @@ In `SelectionCanvas::draw()`:
 - File save (M4)
 - Per-output frame mapping (deferred from M2)
 - Resize handles after selection (drag corners to adjust — M3+ if needed)
+
+## Implementation Notes
+
+### Deviations from design
+
+**Per-window vs shared selection:** The design spec said one global `SelectionState`. During implementation we went through two iterations:
+1. First attempt: per-window independent selection (`HashMap<window::Id, PerWindowState>`) — caused rectangle to appear on all screens simultaneously. Wrong.
+2. Second attempt: per-window independent but gated — caused independent rectangles on each screen. Not the desired UX.
+3. Final approach: single global `selection` + `cursor_pos` + `active_window: Option<window::Id>`. The window that receives `MousePressed` becomes the active owner; canvas only draws the rect on the active surface. This matches the "one rect across all screens" UX.
+
+**Per-output frame mapping (M2 debt resolved in M3):** Each surface now shows its own frozen frame. `OverlayState` holds `frames: Vec<image::Handle>` and `window_frame_idx: HashMap<window::Id, usize>`. Frame indices are assigned in first-seen order on first `CursorMoved` per window.
+
+**Click-to-redraw:** `MousePressed` always starts a new `Drawing` state regardless of current state — no need to Escape first to reset.
+
+**Size label:** Fixed-width pill (90px) anchored to top-left corner of selection, bold 13px black text centred inside white background. `horizontal_alignment: Center` + `vertical_alignment: Center` used for correct centering.
+
+**`canvas::Text` font weight:** `iced::Font { weight: iced::font::Weight::Bold, ..Default::default() }` works in iced 0.13.1.

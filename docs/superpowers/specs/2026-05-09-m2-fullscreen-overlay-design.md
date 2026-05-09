@@ -47,8 +47,8 @@ main()
 - One layer-shell surface per frame/output
 - Layer: `Overlay` (above everything)
 - Anchors: all four edges (fills the output)
-- Exclusive zone: `0`
-- Keyboard interactivity: `OnDemand` (grabs keyboard for Escape)
+- Exclusive zone: `-1` (overlay covers everything, does not reserve space)
+- Keyboard interactivity: `Exclusive` (required to reliably capture Escape)
 - Displays frame as full-surface image widget
 - Closes all surfaces on Escape
 
@@ -70,8 +70,8 @@ main()
 ```
 layer:             Overlay
 anchor:            Top | Bottom | Left | Right
-exclusive_zone:    0
-keyboard_interactivity: OnDemand
+exclusive_zone:    -1
+keyboard_interactivity: Exclusive
 ```
 
 ## Error Handling

@@ -110,11 +110,21 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
                     frame.fill_rectangle(corner, handle, Color::WHITE);
                 }
 
-                // 2c. Size label above the selection.
+                // 2c. Size label above the selection — white pill background, black text.
+                let label = format!("{} × {}", rect.width as u32, rect.height as u32);
+                let label_w = label.len() as f32 * 7.5 + 10.0; // approximate width
+                let label_h = 18.0_f32;
+                let label_x = rect.x;
+                let label_y = rect.y - label_h - 2.0;
+                frame.fill_rectangle(
+                    Point::new(label_x, label_y),
+                    Size::new(label_w, label_h),
+                    Color::WHITE,
+                );
                 frame.fill_text(canvas::Text {
-                    content: format!("{} × {}", rect.width as u32, rect.height as u32),
-                    position: Point::new(rect.x, rect.y - 18.0),
-                    color: Color::WHITE,
+                    content: label,
+                    position: Point::new(label_x + 5.0, label_y + 2.0),
+                    color: Color::BLACK,
                     size: iced::Pixels(12.0),
                     ..canvas::Text::default()
                 });

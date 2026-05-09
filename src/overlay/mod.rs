@@ -9,12 +9,13 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, StartMode};
 use iced_layershell::to_layer_message;
 
+use crate::config::{self, Config};
+use crate::export::{self, crop_selection};
 use crate::types::FrameBuffer;
 
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
     /// Raw captured frames in output order — used for cropping on export.
-    #[allow(dead_code)]
     raw_frames: Vec<FrameBuffer>,
     /// Frozen frames as image handles in output order — used for display.
     handles: Vec<image::Handle>,
@@ -161,7 +162,7 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
                         Color { r: 0.15, g: 0.15, b: 0.15, a: 0.95 },
                     );
 
-                    // Placeholder labels (greyed out — wired in M4).
+                    // Active toolbar labels (white).
                     for (i, label) in ["Copy", "Save"].iter().enumerate() {
                         frame.fill_text(canvas::Text {
                             content: label.to_string(),
@@ -169,7 +170,7 @@ impl<'a> canvas::Program<Message> for SelectionCanvas<'a> {
                                 toolbar_x + 15.0 + i as f32 * 55.0,
                                 toolbar_y + 9.0,
                             ),
-                            color: Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
+                            color: Color::WHITE,
                             size: iced::Pixels(13.0),
                             ..canvas::Text::default()
                         });
@@ -287,7 +288,39 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                     IcedTask::none()
                 }
                 Message::MousePressed(id) => {
-                    // Always start a new selection — cancels any existing rect.
+                    // If a selection is active on this window, check if the click
+                    // lands on a toolbar button before starting a new selection.
+                    if let SelectionState::Selected { rect } = &state.selection {
+                        if state.active_window == Some(id) {
+                            let toolbar_w = 120.0_f32;
+                            let toolbar_h = 32.0_f32;
+                            let toolbar_x = rect.x + (rect.width - toolbar_w) / 2.0;
+                            // Match the draw() toolbar Y logic (assume below-rect fits —
+                            // sufficient for click detection since the overlay fills the screen).
+                            let toolbar_y = rect.y + rect.height + 8.0;
+
+                            let click = state.cursor_pos;
+                            let copy_rect = Rectangle {
+                                x: toolbar_x,
+                                y: toolbar_y,
+                                width: toolbar_w / 2.0,
+                                height: toolbar_h,
+                            };
+                            let save_rect = Rectangle {
+                                x: toolbar_x + toolbar_w / 2.0,
+                                y: toolbar_y,
+                                width: toolbar_w / 2.0,
+                                height: toolbar_h,
+                            };
+                            if copy_rect.contains(click) {
+                                return IcedTask::done(Message::CopyRequested);
+                            }
+                            if save_rect.contains(click) {
+                                return IcedTask::done(Message::SaveRequested);
+                            }
+                        }
+                    }
+                    // Default: start a new selection — cancels any existing rect.
                     state.active_window = Some(id);
                     state.selection = SelectionState::Drawing { start: state.cursor_pos };
                     IcedTask::none()
@@ -308,6 +341,67 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                         state.active_window = None;
                         IcedTask::none()
                     }
+                }
+                Message::CopyRequested => {
+                    if let SelectionState::Selected { rect } = &state.selection {
+                        if let Some(window_id) = state.active_window {
+                            let frame_idx = state.window_frame_idx
+                                .get(&window_id)
+                                .copied()
+                                .unwrap_or(0);
+                            if let Some(frame) = state.raw_frames.get(frame_idx) {
+                                match crop_selection(
+                                    frame,
+                                    rect.x as u32,
+                                    rect.y as u32,
+                                    rect.width as u32,
+                                    rect.height as u32,
+                                ) {
+                                    Ok(cropped) => {
+                                        if let Err(e) = export::copy_to_clipboard(&cropped) {
+                                            tracing::error!(%e, "clipboard copy failed");
+                                        }
+                                    }
+                                    Err(e) => tracing::error!(%e, "crop failed"),
+                                }
+                            }
+                        }
+                    }
+                    iced::exit()
+                }
+                Message::SaveRequested => {
+                    if let SelectionState::Selected { rect } = &state.selection {
+                        if let Some(window_id) = state.active_window {
+                            let frame_idx = state.window_frame_idx
+                                .get(&window_id)
+                                .copied()
+                                .unwrap_or(0);
+                            if let Some(frame) = state.raw_frames.get(frame_idx) {
+                                match crop_selection(
+                                    frame,
+                                    rect.x as u32,
+                                    rect.y as u32,
+                                    rect.width as u32,
+                                    rect.height as u32,
+                                ) {
+                                    Ok(cropped) => {
+                                        let cfg = Config::load();
+                                        let dir = cfg.resolved_save_dir();
+                                        if let Err(e) = std::fs::create_dir_all(&dir) {
+                                            tracing::error!(%e, "failed to create save directory");
+                                        } else {
+                                            let path = dir.join(config::screenshot_filename());
+                                            if let Err(e) = export::save_cropped_png(&cropped, &path) {
+                                                tracing::error!(%e, "save failed");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => tracing::error!(%e, "crop failed"),
+                                }
+                            }
+                        }
+                    }
+                    iced::exit()
                 }
                 _ => IcedTask::none(),
             }

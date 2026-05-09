@@ -73,6 +73,7 @@ impl FrameBuffer {
 mod tests {
     use super::*;
 
+    // single-row convenience helper
     fn make_frame(format: PixelFormat, pixels: Vec<u8>) -> FrameBuffer {
         let width = (pixels.len() / 4) as u32;
         FrameBuffer {
@@ -88,9 +89,9 @@ mod tests {
     fn pixel_format_abgr8888_converts_correctly() {
         // Memory layout for Abgr8888: [R, G, B, A] per pixel
         // to_rgba() should produce [R, G, B, A]
-        let frame = make_frame(PixelFormat::Abgr8888, vec![0x11, 0x22, 0x33, 0xFF]);
+        let frame = make_frame(PixelFormat::Abgr8888, vec![0x11, 0x22, 0x33, 0xAA]);
         let rgba = frame.to_rgba();
-        assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xFF]);
+        assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xAA]);
     }
 
     #[test]
@@ -106,9 +107,9 @@ mod tests {
     fn pixel_format_argb8888_converts_correctly() {
         // Memory layout for Argb8888: [B, G, R, A] per pixel
         // to_rgba() should produce [R, G, B, A]
-        let frame = make_frame(PixelFormat::Argb8888, vec![0x33, 0x22, 0x11, 0xFF]);
+        let frame = make_frame(PixelFormat::Argb8888, vec![0x33, 0x22, 0x11, 0xAA]);
         let rgba = frame.to_rgba();
-        assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xFF]);
+        assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xAA]);
     }
 
     #[test]

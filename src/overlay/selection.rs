@@ -3,7 +3,6 @@ use iced::Rectangle;
 
 /// Which phase of the selection interaction we are in.
 #[derive(Debug, Clone, PartialEq, Default)]
-#[allow(dead_code)]
 pub enum SelectionState {
     /// Waiting for the user to click. Crosshair cursor shown.
     #[default]
@@ -16,7 +15,6 @@ pub enum SelectionState {
 
 /// Produce a `Rectangle` with top-left origin from any two corner points.
 /// Ensures width and height are at least 1.0.
-#[allow(dead_code)]
 pub fn normalize_rect(a: Point, b: Point) -> Rectangle {
     let x = a.x.min(b.x);
     let y = a.y.min(b.y);

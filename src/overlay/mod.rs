@@ -1,5 +1,4 @@
 mod selection;
-#[allow(unused_imports)]
 pub(crate) use selection::{SelectionState, normalize_rect};
 
 use iced::widget::{canvas, container, image, stack};

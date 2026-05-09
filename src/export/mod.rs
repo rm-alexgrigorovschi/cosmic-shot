@@ -38,25 +38,53 @@ pub fn save_png(frame: &FrameBuffer, path: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-/// Copy a cropped image to the system clipboard.
+/// Copy a cropped image to the system clipboard via `wl-copy`.
+///
+/// Encodes the image as PNG and pipes it to `wl-copy --type image/png`.
+/// `wl-copy` daemonises itself so the clipboard content persists after
+/// cosmic-shot exits. Falls back to an error if `wl-copy` is not found.
 pub fn copy_to_clipboard(image: &CroppedImage) -> Result<(), ExportError> {
-    use arboard::{Clipboard, ImageData};
-    use std::borrow::Cow;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
-    let mut clipboard =
-        Clipboard::new().map_err(|e| ExportError::Clipboard(e.to_string()))?;
+    // Encode as PNG in memory.
+    let img: ImageBuffer<Rgba<u8>, _> =
+        ImageBuffer::from_raw(image.width, image.height, image.rgba.clone())
+            .ok_or_else(|| ExportError::Encode("pixel buffer size mismatch".to_string()))?;
 
-    let img_data = ImageData {
-        width: image.width as usize,
-        height: image.height as usize,
-        bytes: Cow::Borrowed(&image.rgba),
-    };
+    let mut png_bytes: Vec<u8> = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| ExportError::Encode(e.to_string()))?;
 
-    clipboard
-        .set_image(img_data)
-        .map_err(|e| ExportError::Clipboard(e.to_string()))?;
+    // Pipe PNG bytes to wl-copy. wl-copy forks itself and serves the
+    // clipboard independently, so the content survives process exit.
+    let mut child = Command::new("wl-copy")
+        .args(["--type", "image/png"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| ExportError::Clipboard(format!("failed to spawn wl-copy: {e}")))?;
 
-    tracing::info!("copied {}×{} image to clipboard", image.width, image.height);
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(&png_bytes)
+        .map_err(|e| ExportError::Clipboard(format!("failed to write to wl-copy: {e}")))?;
+
+    let status = child
+        .wait()
+        .map_err(|e| ExportError::Clipboard(format!("wl-copy wait failed: {e}")))?;
+
+    if !status.success() {
+        return Err(ExportError::Clipboard(format!(
+            "wl-copy exited with status {status}"
+        )));
+    }
+
+    tracing::info!("copied {}×{} image to clipboard via wl-copy", image.width, image.height);
     Ok(())
 }
 

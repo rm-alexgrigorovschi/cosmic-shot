@@ -1,34 +1,26 @@
+use anyhow::Context;
+use tracing_subscriber::EnvFilter;
+
+// These items are used via lib.rs; suppress dead_code for the binary target.
+#[allow(dead_code)]
 mod capture;
-mod export;
 mod overlay;
 mod types;
 
-use std::path::Path;
-
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    tracing::info!("cosmic-shot starting");
+    tracing::info!("starting cosmic-shot");
 
-    // Phase 1: Capture
-    let frame = capture::capture_output()?;
-    tracing::info!(
-        width = frame.width,
-        height = frame.height,
-        "capture complete"
-    );
+    let frames = capture::capture_all_outputs()
+        .context("failed to capture outputs")?;
 
-    // Phase 2: Export (verification side effect)
-    let output_path = Path::new("capture.png");
-    export::save_png(&frame, output_path)?;
+    tracing::info!("captured {} output(s)", frames.len());
 
-    // Phase 3: Display
-    overlay::run(frame)?;
+    overlay::run(frames).context("overlay error")?;
 
     Ok(())
 }

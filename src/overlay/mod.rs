@@ -13,9 +13,12 @@ use crate::types::FrameBuffer;
 
 /// State shared across all layer-shell surfaces.
 struct OverlayState {
-    /// Frozen frames in output order — assigned to windows in first-seen order.
-    frames: Vec<image::Handle>,
-    /// Windows assigned so far: window::Id → index into `frames`.
+    /// Raw captured frames in output order — used for cropping on export.
+    #[allow(dead_code)]
+    raw_frames: Vec<FrameBuffer>,
+    /// Frozen frames as image handles in output order — used for display.
+    handles: Vec<image::Handle>,
+    /// Windows assigned so far: window::Id → index into raw_frames/handles.
     window_frame_idx: std::collections::HashMap<iced::window::Id, usize>,
     /// Global selection state — shared across all surfaces.
     selection: SelectionState,
@@ -41,6 +44,10 @@ enum Message {
     MouseReleased,
     /// Cursor moved to a new position.
     CursorMoved(iced::window::Id, iced::Point),
+    /// User clicked Copy in the toolbar.
+    CopyRequested,
+    /// User clicked Save in the toolbar.
+    SaveRequested,
 }
 
 /// Canvas program that renders the dim overlay, selection rectangle, and placeholder toolbar.
@@ -198,11 +205,11 @@ fn overlay_view(
     // Assign frame index on first CursorMoved; fall back to frame 0 before any cursor event.
     let frame_idx = state.window_frame_idx.get(&window).copied().unwrap_or(0);
     let handle = state
-        .frames
+        .handles
         .get(frame_idx)
-        .or_else(|| state.frames.first())
+        .or_else(|| state.handles.first())
         .cloned()
-        .unwrap_or_else(|| state.frames[0].clone());
+        .unwrap_or_else(|| state.handles[0].clone());
 
     let frozen = image::Image::new(handle)
         .width(Length::Fill)
@@ -240,9 +247,10 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Convert all captured frames to image handles — one per output.
-    let handles: Vec<image::Handle> = frames
-        .into_iter()
+    // Keep raw frames for export cropping; build image handles for display.
+    let raw_frames = frames;
+    let handles: Vec<image::Handle> = raw_frames
+        .iter()
         .map(|f| {
             // INVARIANT: data was read as pool.mmap()[..stride*height] in
             // capture_one_output, so data.len() == stride * height always holds.
@@ -269,7 +277,7 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                     // Assign a frame index to this window on first seen, in order.
                     if !state.window_frame_idx.contains_key(&id) {
                         let next_idx = state.window_frame_idx.len();
-                        let clamped = next_idx.min(state.frames.len().saturating_sub(1));
+                        let clamped = next_idx.min(state.handles.len().saturating_sub(1));
                         state.window_frame_idx.insert(id, clamped);
                     }
                     // Only track cursor on the active window (or any window if Idle).
@@ -335,7 +343,8 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
     .layer_settings(layer_settings)
     .run_with(move || (
         OverlayState {
-            frames: handles,
+            raw_frames,
+            handles,
             window_frame_idx: std::collections::HashMap::new(),
             selection: SelectionState::Idle,
             cursor_pos: iced::Point::ORIGIN,

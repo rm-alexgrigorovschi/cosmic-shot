@@ -4,6 +4,7 @@ use tracing_subscriber::EnvFilter;
 // These items are used via lib.rs; suppress dead_code for the binary target.
 #[allow(dead_code)]
 mod capture;
+mod config;
 mod overlay;
 mod types;
 

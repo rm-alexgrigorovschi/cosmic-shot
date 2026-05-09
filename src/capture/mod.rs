@@ -34,6 +34,10 @@ pub enum CaptureError {
     #[error("no active output found")]
     NoOutput,
 
+    #[error("no outputs available on the compositor")]
+    #[allow(dead_code)] // used via lib.rs; binary wires this up in Task 5
+    NoOutputs,
+
     #[error("compositor offered no supported pixel format (need Argb8888, Xrgb8888, Abgr8888, or Xbgr8888)")]
     UnsupportedFormat,
 
@@ -213,6 +217,189 @@ pub fn capture_output() -> Result<FrameBuffer, CaptureError> {
     output.release();
 
     tracing::info!(width, height, ?pixel_format, "frame captured");
+
+    Ok(FrameBuffer {
+        data,
+        width,
+        height,
+        stride,
+        format: pixel_format,
+    })
+}
+
+/// Capture all available outputs and return their pixel data.
+///
+/// Opens a Wayland connection, enumerates all `wl_output` globals, and
+/// captures each one in sequence using [`capture_one_output`].
+///
+/// # Errors
+///
+/// Returns [`CaptureError::NoOutputs`] if no `wl_output` globals are present.
+/// Other variants are returned if any individual capture fails.
+///
+/// # Example
+///
+/// ```no_run
+/// let frames = cosmic_shot::capture::capture_all_outputs().expect("capture failed");
+/// println!("captured {} output(s)", frames.len());
+/// ```
+#[allow(dead_code)] // exposed via lib.rs; binary wires this up in Task 5
+pub fn capture_all_outputs() -> Result<Vec<FrameBuffer>, CaptureError> {
+    let conn =
+        Connection::connect_to_env().map_err(|e| CaptureError::Connection(e.to_string()))?;
+    let (globals, mut event_queue) = registry_queue_init::<CaptureState>(&conn)?;
+    let qh = event_queue.handle();
+
+    // Collect (name, advertised_version) of all wl_output globals.
+    let output_entries: Vec<(u32, u32)> = globals.contents().with_list(|list| {
+        list.iter()
+            .filter(|g| g.interface == "wl_output")
+            .map(|g| (g.name, g.version))
+            .collect()
+    });
+
+    if output_entries.is_empty() {
+        return Err(CaptureError::NoOutputs);
+    }
+
+    let shm = Shm::bind(&globals, &qh).map_err(|e| CaptureError::SctBind(e.to_string()))?;
+
+    let capture_manager: ExtImageCopyCaptureManagerV1 = globals
+        .bind(&qh, 1..=1, ())
+        .map_err(|_| CaptureError::NoScreencopy)?;
+
+    let source_manager: ExtOutputImageCaptureSourceManagerV1 = globals
+        .bind(&qh, 1..=1, ())
+        .map_err(|_| CaptureError::NoImageCaptureSource)?;
+
+    let mut state = CaptureState {
+        shm,
+        frame: FrameState::default(),
+    };
+
+    let mut frames = Vec::with_capacity(output_entries.len());
+
+    for (name, adv_version) in output_entries {
+        // Bind this specific output by its global name via the underlying registry.
+        // We cap at version 4 (the max our Dispatch impl handles) and floor at 3
+        // (so .release() is available).
+        let bind_version = adv_version.clamp(3, 4);
+        let output: wl_output::WlOutput =
+            globals.registry().bind(name, bind_version, &qh, ());
+
+        // Reset per-capture state before each output.
+        state.frame = FrameState::default();
+
+        let frame = capture_one_output(
+            &capture_manager,
+            &source_manager,
+            &output,
+            &qh,
+            &mut event_queue,
+            &mut state,
+        )?;
+
+        output.release();
+        frames.push(frame);
+    }
+
+    source_manager.destroy();
+    capture_manager.destroy();
+
+    Ok(frames)
+}
+
+/// Capture a single output using an already-initialized Wayland session.
+fn capture_one_output(
+    capture_manager: &ExtImageCopyCaptureManagerV1,
+    source_manager: &ExtOutputImageCaptureSourceManagerV1,
+    output: &wl_output::WlOutput,
+    qh: &QueueHandle<CaptureState>,
+    event_queue: &mut wayland_client::EventQueue<CaptureState>,
+    state: &mut CaptureState,
+) -> Result<FrameBuffer, CaptureError> {
+    let source = source_manager.create_source(output, qh, ());
+    let session = capture_manager.create_session(&source, Options::empty(), qh, ());
+
+    const MAX_ITERATIONS: u32 = 1000;
+    let mut iterations = 0u32;
+    while !state.frame.constraints_done && !state.frame.failed {
+        if iterations >= MAX_ITERATIONS {
+            return Err(CaptureError::Timeout);
+        }
+        event_queue.blocking_dispatch(state)?;
+        iterations += 1;
+    }
+
+    let format = state
+        .frame
+        .shm_formats
+        .iter()
+        .find(|f| {
+            matches!(
+                f,
+                wl_shm::Format::Argb8888
+                    | wl_shm::Format::Xrgb8888
+                    | wl_shm::Format::Abgr8888
+                    | wl_shm::Format::Xbgr8888
+            )
+        })
+        .copied()
+        .ok_or(CaptureError::UnsupportedFormat)?;
+
+    let width = state.frame.buffer_width;
+    let height = state.frame.buffer_height;
+    // INVARIANT: stride is width * 4 for all supported 32-bit formats.
+    let stride = width * 4;
+    let pool_size = (stride * height) as usize;
+
+    let mut pool =
+        RawPool::new(pool_size, &state.shm).map_err(|e| CaptureError::ShmPool(e.to_string()))?;
+    let wl_buffer = pool.create_buffer(
+        0,
+        width as i32,
+        height as i32,
+        stride as i32,
+        format,
+        (),
+        qh,
+    );
+
+    let capture_frame = session.create_frame(qh, ());
+    capture_frame.attach_buffer(&wl_buffer);
+    capture_frame.damage_buffer(0, 0, width as i32, height as i32);
+    capture_frame.capture();
+
+    let mut iterations = 0u32;
+    while !state.frame.ready && !state.frame.failed {
+        if iterations >= MAX_ITERATIONS {
+            return Err(CaptureError::Timeout);
+        }
+        event_queue.blocking_dispatch(state)?;
+        iterations += 1;
+    }
+
+    if state.frame.failed {
+        return Err(CaptureError::FrameFailed);
+    }
+
+    let data = pool.mmap()[..pool_size].to_vec();
+
+    let pixel_format = match format {
+        wl_shm::Format::Argb8888 => PixelFormat::Argb8888,
+        wl_shm::Format::Xrgb8888 => PixelFormat::Xrgb8888,
+        wl_shm::Format::Abgr8888 => PixelFormat::Abgr8888,
+        wl_shm::Format::Xbgr8888 => PixelFormat::Xbgr8888,
+        // INVARIANT: filtered for exactly these four formats above.
+        _ => return Err(CaptureError::UnsupportedFormat),
+    };
+
+    wl_buffer.destroy();
+    capture_frame.destroy();
+    session.destroy();
+    source.destroy();
+
+    tracing::info!(width, height, ?pixel_format, "frame captured (multi-output)");
 
     Ok(FrameBuffer {
         data,

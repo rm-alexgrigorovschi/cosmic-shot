@@ -1,1 +1,22 @@
+# Build artifacts
 /target
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Superpowers agent skills (auto-installed, not project source)
+.agents/
+.superpowers/
+skills-lock.json
+
+# Debug artifacts
+*.log
+capture.png

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=cosmic-shot
+Comment=Fast native screenshot tool for COSMIC DE
+Exec=cosmic-shot
+Type=Application
+Categories=Utility;X-COSMIC;
+Keywords=screenshot;capture;screen;
+Icon=camera-photo
+Terminal=false
+StartupNotify=false
+NoDisplay=true

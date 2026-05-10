@@ -52,6 +52,17 @@
 - Profile with `cargo flamegraph` before optimizing; no premature optimization
 - Benchmarks for capture latency live in `benches/` using `criterion`
 
+## Output Formats
+- JPEG export requires RGBA→RGB conversion (drop alpha channel) — JPEG has no alpha support
+- WebP in `image` 0.25 is lossless only; quality parameter is ignored; lossy WebP needs a newer crate version
+- Clipboard always uses PNG regardless of configured format — paste targets have spotty JPEG/WebP support
+- `image::codecs::jpeg::JpegEncoder::new_with_quality` and `image::codecs::webp::WebPEncoder::new_with_quality` are the encoding APIs
+
+## CLI / UX Lessons
+- cosmic-shot is launched via keyboard shortcut — stdout is invisible to the user
+- Any user-visible feedback (countdowns, notifications, confirmations) must use desktop notifications (`notify-send` subprocess) or an on-screen iced overlay, never stdout/stderr
+- `notify-send` subprocess follows the same pattern as `wl-copy`: spawn, pipe, fork-persist
+
 ## Architecture Boundaries
 - Three-phase pipeline (freeze / select / export) maps to three modules — they don't share mutable state
 - `capture/` — Wayland protocol code, knows nothing about UI

@@ -2,6 +2,37 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// Supported output image formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    Png,
+    Jpeg,
+    #[serde(alias = "webp")]
+    WebP,
+}
+
+impl OutputFormat {
+    /// File extension for this format (without the dot).
+    pub fn file_extension(&self) -> &str {
+        match self {
+            OutputFormat::Png => "png",
+            OutputFormat::Jpeg => "jpg",
+            OutputFormat::WebP => "webp",
+        }
+    }
+
+    /// Corresponding `image::ImageFormat`.
+    #[allow(dead_code)] // Used in export module (next task)
+    pub fn image_format(&self) -> image::ImageFormat {
+        match self {
+            OutputFormat::Png => image::ImageFormat::Png,
+            OutputFormat::Jpeg => image::ImageFormat::Jpeg,
+            OutputFormat::WebP => image::ImageFormat::WebP,
+        }
+    }
+}
+
 /// Application configuration.
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -11,6 +42,10 @@ pub struct Config {
     /// Human-readable keyboard shortcut shown in --print-shortcut output.
     /// Not used at runtime — documents which shortcut to register in COSMIC Settings.
     pub shortcut: String,
+    /// Output image format.
+    pub format: OutputFormat,
+    /// Quality for lossy formats (1-100). Ignored for PNG.
+    pub quality: u8,
 }
 
 impl Default for Config {
@@ -18,6 +53,8 @@ impl Default for Config {
         Self {
             save_dir: "~/Pictures/cosmic-shot".to_string(),
             shortcut: "Alt+Shift+S".to_string(),
+            format: OutputFormat::Png,
+            quality: 85,
         }
     }
 }
@@ -79,10 +116,11 @@ fn expand_tilde(path: &str) -> PathBuf {
 
 /// Generate a timestamped screenshot filename.
 ///
-/// Format: `screenshot-YYYY-MM-DD_HH-MM-SS.png`
-pub fn screenshot_filename() -> String {
+/// Format: `screenshot-YYYY-MM-DD_HH-MM-SS.{ext}`
+pub fn screenshot_filename(format: &OutputFormat) -> String {
     let now = chrono::Local::now();
-    now.format("screenshot-%Y-%m-%d_%H-%M-%S.png").to_string()
+    now.format(&format!("screenshot-%Y-%m-%d_%H-%M-%S.{}", format.file_extension()))
+        .to_string()
 }
 
 #[cfg(test)]
@@ -139,10 +177,55 @@ mod tests {
 
     #[test]
     fn screenshot_filename_format() {
-        let name = screenshot_filename();
+        let name = screenshot_filename(&OutputFormat::Png);
         assert!(name.starts_with("screenshot-"));
         assert!(name.ends_with(".png"));
         // Format: screenshot-YYYY-MM-DD_HH-MM-SS.png = 34 chars
         assert_eq!(name.len(), 34);
+    }
+
+    #[test]
+    fn output_format_file_extension() {
+        assert_eq!(OutputFormat::Png.file_extension(), "png");
+        assert_eq!(OutputFormat::Jpeg.file_extension(), "jpg");
+        assert_eq!(OutputFormat::WebP.file_extension(), "webp");
+    }
+
+    #[test]
+    fn output_format_deserialize_valid() {
+        let config: Config = toml::from_str(r#"format = "jpeg""#).unwrap();
+        assert_eq!(config.format, OutputFormat::Jpeg);
+
+        let config: Config = toml::from_str(r#"format = "webp""#).unwrap();
+        assert_eq!(config.format, OutputFormat::WebP);
+
+        let config: Config = toml::from_str(r#"format = "png""#).unwrap();
+        assert_eq!(config.format, OutputFormat::Png);
+    }
+
+    #[test]
+    fn config_default_format_and_quality() {
+        let config = Config::default();
+        assert_eq!(config.format, OutputFormat::Png);
+        assert_eq!(config.quality, 85);
+    }
+
+    #[test]
+    fn config_quality_from_toml() {
+        let config: Config = toml::from_str(r#"quality = 50"#).unwrap();
+        assert_eq!(config.quality, 50);
+    }
+
+    #[test]
+    fn screenshot_filename_with_format() {
+        let name = screenshot_filename(&OutputFormat::Jpeg);
+        assert!(name.starts_with("screenshot-"));
+        assert!(name.ends_with(".jpg"));
+
+        let name = screenshot_filename(&OutputFormat::WebP);
+        assert!(name.ends_with(".webp"));
+
+        let name = screenshot_filename(&OutputFormat::Png);
+        assert!(name.ends_with(".png"));
     }
 }

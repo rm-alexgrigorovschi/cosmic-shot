@@ -41,9 +41,12 @@
 - `canvas::Text` font weight: `iced::Font { weight: iced::font::Weight::Bold, ..Default::default() }`
 - `canvas::Text` alignment: `horizontal_alignment: iced::alignment::Horizontal::Center`, `vertical_alignment: iced::alignment::Vertical::Center`
 - `LineDash` segments must be `const &[f32]` to avoid lifetime issues in `draw()`
+- Window creation order in `iced_layershell` does NOT match `wl_output` enumeration order — frames must be matched to surfaces by resolution (aspect ratio), not by index. Known limitation: identical-resolution multi-monitor setups may get swapped frames (cosmetic only, crop still works on the active screen)
+- `window::Event::Opened { size }` fires at surface creation with logical size — use it to match frames to surfaces immediately
+- `canvas::Program::update()` fires only on mouse/touch events, NOT on every render — don't rely on it for init-time work
+- Clipboard on Wayland: `arboard` spawns a thread (not a process) to serve clipboard; thread dies with `iced::exit()`. Use `wl-copy` subprocess instead — it forks and persists after parent exit
 
-
-- The freeze phase has a budget: capture-to-overlay-visible must be <50ms on reference hardware
+## Performance Discipline
 - No allocations in the hot path during selection (mouse-move handlers)
 - Image encoding is lazy — only on user export action, never during capture or selection
 - Profile with `cargo flamegraph` before optimizing; no premature optimization

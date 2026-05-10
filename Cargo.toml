@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.75"
 description = "Fast native screenshot tool for COSMIC DE"
 license = "MIT"
+authors = ["Alex <grigorovschii.a@gmail.com>"]
 
 [dependencies]
 anyhow = "1"
@@ -22,3 +23,12 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[package.metadata.deb]
+section = "x11"
+priority = "optional"
+depends = "libwayland-client0, wl-clipboard"
+assets = [
+    ["target/release/cosmic-shot", "/usr/bin/cosmic-shot", "755"],
+    ["contrib/cosmic-shot.desktop", "/usr/share/applications/cosmic-shot.desktop", "644"],
+]

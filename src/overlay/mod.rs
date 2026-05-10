@@ -233,11 +233,21 @@ fn scale_factor(
     surface_logical_size: &std::collections::HashMap<iced::window::Id, (f32, f32)>,
     window: iced::window::Id,
 ) -> f32 {
-    if let Some(&(logical_w, _)) = surface_logical_size.get(&window) {
+    if let Some(&(logical_w, logical_h)) = surface_logical_size.get(&window) {
         if logical_w > 0.0 {
-            return frame.width as f32 / logical_w;
+            let scale = frame.width as f32 / logical_w;
+            tracing::debug!(
+                frame_w = frame.width,
+                frame_h = frame.height,
+                logical_w,
+                logical_h,
+                scale,
+                "computed HiDPI scale factor for crop"
+            );
+            return scale;
         }
     }
+    tracing::warn!("surface logical size unknown for window, defaulting scale to 1.0");
     1.0
 }
 
@@ -245,7 +255,8 @@ fn overlay_view(
     state: &OverlayState,
     window: iced::window::Id,
 ) -> Element<'_, Message, Theme, iced::Renderer> {
-    // Assign frame index on first CursorMoved; fall back to frame 0 before any cursor event.
+    // Frame index is assigned eagerly in the window creation callback.
+    // Falls back to 0 if somehow called before assignment (shouldn't happen).
     let frame_idx = state.window_frame_idx.get(&window).copied().unwrap_or(0);
     let handle = state
         .handles
@@ -317,12 +328,6 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
         |state: &mut OverlayState, message: Message| -> IcedTask<Message> {
             match message {
                 Message::CursorMoved(id, pos) => {
-                    // Assign a frame index to this window on first seen, in order.
-                    if !state.window_frame_idx.contains_key(&id) {
-                        let next_idx = state.window_frame_idx.len();
-                        let clamped = next_idx.min(state.handles.len().saturating_sub(1));
-                        state.window_frame_idx.insert(id, clamped);
-                    }
                     // Only track cursor on the active window (or any window if Idle).
                     if state.active_window.is_none() || state.active_window == Some(id) {
                         state.cursor_pos = pos;
@@ -457,6 +462,7 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                     iced::exit()
                 }
                 Message::SurfaceBoundsKnown(id, w, h) => {
+                    tracing::debug!(w, h, "surface bounds known for window {id:?}");
                     state.surface_logical_size.insert(id, (w, h));
                     IcedTask::none()
                 }
@@ -464,7 +470,14 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
             }
         },
         overlay_view,
-        |_state: &mut OverlayState, _id| {},
+        |state: &mut OverlayState, id| {
+            // Eagerly assign a frame index when the surface is created, in order.
+            // This ensures each screen shows its own frozen frame immediately,
+            // without waiting for the first CursorMoved event.
+            let next_idx = state.window_frame_idx.len();
+            let clamped = next_idx.min(state.handles.len().saturating_sub(1));
+            state.window_frame_idx.insert(id, clamped);
+        },
     )
     .subscription(|_state| {
         use iced::event::listen_with;

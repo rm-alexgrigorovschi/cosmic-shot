@@ -2,7 +2,7 @@
 # install.sh — install cosmic-shot binary and desktop file
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/OWNER/cosmic-shot/main/contrib/install.sh | sh
+#   curl -sSL https://raw.githubusercontent.com/rm-alexgrigorovschi/cosmic-shot/main/contrib/install.sh | sh
 #   ./contrib/install.sh              # remote install, user mode (default)
 #   ./contrib/install.sh --user       # remote install, user mode
 #   ./contrib/install.sh --system     # remote install, system mode (requires sudo)
@@ -11,7 +11,7 @@
 set -e
 
 # ── Configuration ──────────────────────────────────────────────────────
-OWNER="OWNER"
+OWNER="rm-alexgrigorovschi"
 REPO="cosmic-shot"
 GITHUB_API="https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
 # ───────────────────────────────────────────────────────────────────────

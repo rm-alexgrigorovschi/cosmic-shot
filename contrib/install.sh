@@ -55,6 +55,8 @@ update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 SHORTCUT="Alt+Shift+S"
 if command -v cosmic-shot >/dev/null 2>&1; then
     SHORTCUT="$(cosmic-shot --print-shortcut 2>/dev/null | grep '^Shortcut:' | sed 's/Shortcut: //')" || true
+    # Fall back to default if the output was empty or format changed.
+    SHORTCUT="${SHORTCUT:-Alt+Shift+S}"
 fi
 
 echo ""

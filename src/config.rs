@@ -8,12 +8,16 @@ use serde::Deserialize;
 pub struct Config {
     /// Directory where screenshots are saved.
     pub save_dir: String,
+    /// Human-readable keyboard shortcut shown in --print-shortcut output.
+    /// Not used at runtime — documents which shortcut to register in COSMIC Settings.
+    pub shortcut: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             save_dir: "~/Pictures/cosmic-shot".to_string(),
+            shortcut: "Alt+Shift+S".to_string(),
         }
     }
 }
@@ -115,6 +119,22 @@ mod tests {
     fn config_missing_file_uses_defaults() {
         let config = Config::load_from(Path::new("/nonexistent/path/config.toml"));
         assert_eq!(config.save_dir, "~/Pictures/cosmic-shot");
+    }
+
+    #[test]
+    fn config_default_shortcut() {
+        let config = Config::default();
+        assert_eq!(config.shortcut, "Alt+Shift+S");
+    }
+
+    #[test]
+    fn config_shortcut_parsed_from_toml() {
+        let toml = r#"
+            save_dir = "~/Pictures"
+            shortcut = "Super+Shift+S"
+        "#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.shortcut, "Super+Shift+S");
     }
 
     #[test]

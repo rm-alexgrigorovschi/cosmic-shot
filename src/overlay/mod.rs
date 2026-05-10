@@ -448,8 +448,8 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                                         if let Err(e) = std::fs::create_dir_all(&dir) {
                                             tracing::error!(%e, "failed to create save directory");
                                         } else {
-                                            let path = dir.join(config::screenshot_filename());
-                                            if let Err(e) = export::save_cropped_png(&cropped, &path) {
+                                            let path = dir.join(config::screenshot_filename(&cfg.format));
+                                            if let Err(e) = export::save_cropped(&cropped, &path, cfg.format, cfg.quality) {
                                                 tracing::error!(%e, "save failed");
                                             }
                                         }

@@ -178,3 +178,25 @@ Placed at the top of `main()`, before the capture pipeline.
 
 Install script correctness is verified manually (copies correct files, prints
 instructions). No bats test suite for M5 — manual verification in Task 8.
+
+## Implementation Notes
+
+### Deviations from design
+
+**Desktop file categories fixed by desktop-file-validate**
+The spec listed `Categories=GNOME;COSMIC;Utility;` but `GNOME` and `COSMIC` are unregistered categories that fail XDG validation. Fixed to `Categories=Utility;X-COSMIC;` per the XDG spec requirement that unregistered categories use the `X-` prefix.
+
+**install.sh: empty shortcut guard added**
+After code review, added `SHORTCUT="${SHORTCUT:-Alt+Shift+S}"` after the `--print-shortcut` subprocess call to guard against an empty string if the output format ever changes.
+
+**Frame assignment bug fixed during M5 verification**
+During end-to-end testing, a pre-existing M2 bug was discovered: each overlay surface showed frame 0 (main screen capture) on all screens until the cursor moved there, because frame indices were assigned lazily on first `CursorMoved`. Fixed by moving assignment to the window creation callback (`|state, id|`), which fires immediately when each layer-shell surface is created. Each screen now shows its own correct frozen frame from the moment the overlay appears.
+
+### What was verified
+
+- `cosmic-shot --print-shortcut` prints correct shortcut and exits 0
+- `./contrib/install.sh --user` installs binary + desktop file, prints COSMIC shortcut registration instructions
+- `Alt+Shift+S` shortcut registered in COSMIC Settings → Keyboard → Custom Shortcuts
+- Pressing `Alt+Shift+S` launches the overlay immediately from any application
+- Both screens show their own frozen/dimmed frame (correct by design)
+- Selection, Copy, and Save all work correctly when launched via shortcut

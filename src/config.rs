@@ -46,8 +46,6 @@ pub struct Config {
     pub format: OutputFormat,
     /// Quality for lossy formats (1-100). Ignored for PNG.
     pub quality: u8,
-    /// Seconds to wait before capturing. Clamped to 0–60.
-    pub delay_secs: u64,
 }
 
 impl Default for Config {
@@ -57,7 +55,6 @@ impl Default for Config {
             shortcut: "Alt+Shift+S".to_string(),
             format: OutputFormat::Png,
             quality: 85,
-            delay_secs: 0,
         }
     }
 }
@@ -79,15 +76,8 @@ impl Config {
     /// Load config from a specific path (for testing).
     pub fn load_from(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
-            Ok(contents) => match toml::from_str::<Config>(&contents) {
-                Ok(mut config) => {
-                    if config.delay_secs > 60 {
-                        tracing::warn!(
-                            delay_secs = config.delay_secs,
-                            "delay_secs exceeds maximum of 60, clamping"
-                        );
-                        config.delay_secs = 60;
-                    }
+            Ok(contents) => match toml::from_str(&contents) {
+                Ok(config) => {
                     tracing::info!(path = %path.display(), "config loaded");
                     config
                 }
@@ -224,29 +214,6 @@ mod tests {
     fn config_quality_from_toml() {
         let config: Config = toml::from_str(r#"quality = 50"#).unwrap();
         assert_eq!(config.quality, 50);
-    }
-
-    #[test]
-    fn config_default_delay_secs() {
-        let config = Config::default();
-        assert_eq!(config.delay_secs, 0);
-    }
-
-    #[test]
-    fn config_delay_secs_from_toml() {
-        let config: Config = toml::from_str(r#"delay_secs = 5"#).unwrap();
-        assert_eq!(config.delay_secs, 5);
-    }
-
-    #[test]
-    fn config_delay_secs_clamped_to_60() {
-        let dir = std::env::temp_dir().join("cosmic-shot-test-config");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.toml");
-        std::fs::write(&path, "delay_secs = 120").unwrap();
-        let config = Config::load_from(&path);
-        assert_eq!(config.delay_secs, 60);
-        std::fs::remove_file(&path).ok();
     }
 
     #[test]

@@ -464,19 +464,41 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                 Message::SurfaceBoundsKnown(id, w, h) => {
                     tracing::debug!(w, h, "surface bounds known for window {id:?}");
                     state.surface_logical_size.insert(id, (w, h));
+
+                    // Match this window to the correct frame by resolution.
+                    // The layer-shell surface fills its output, so the logical bounds
+                    // relate to the frame's physical size by the HiDPI scale factor.
+                    // Find the frame whose aspect ratio and dimensions best match.
+                    if !state.window_frame_idx.contains_key(&id) {
+                        let already_assigned: std::collections::HashSet<usize> =
+                            state.window_frame_idx.values().copied().collect();
+                        let best = state
+                            .raw_frames
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| !already_assigned.contains(i))
+                            .min_by_key(|(_, f)| {
+                                // Score: difference between frame aspect and surface aspect.
+                                // Lower is better. Multiply by 1000 for integer comparison.
+                                let frame_aspect = f.width as f64 / f.height.max(1) as f64;
+                                let surface_aspect = w as f64 / h.max(1.0) as f64;
+                                ((frame_aspect - surface_aspect).abs() * 1000.0) as u64
+                            })
+                            .map(|(i, _)| i);
+                        if let Some(idx) = best {
+                            tracing::debug!(idx, "matched window {id:?} to frame by resolution");
+                            state.window_frame_idx.insert(id, idx);
+                        }
+                    }
                     IcedTask::none()
                 }
                 _ => IcedTask::none(),
             }
         },
         overlay_view,
-        |state: &mut OverlayState, id| {
-            // Eagerly assign a frame index when the surface is created, in order.
-            // This ensures each screen shows its own frozen frame immediately,
-            // without waiting for the first CursorMoved event.
-            let next_idx = state.window_frame_idx.len();
-            let clamped = next_idx.min(state.handles.len().saturating_sub(1));
-            state.window_frame_idx.insert(id, clamped);
+        |_state: &mut OverlayState, _id| {
+            // Frame assignment happens in SurfaceBoundsKnown (matched by resolution),
+            // not here, because window creation order may differ from capture order.
         },
     )
     .subscription(|_state| {
@@ -499,6 +521,9 @@ pub fn run(frames: Vec<FrameBuffer>) -> anyhow::Result<()> {
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Message::MouseReleased)
+                }
+                Event::Window(iced::window::Event::Opened { size, .. }) => {
+                    Some(Message::SurfaceBoundsKnown(id, size.width, size.height))
                 }
                 _ => None,
             }),
